@@ -48,6 +48,8 @@ docker-compose up backend worker frontend
 **Backend:**
 ```bash
 cd backend
+py  -m venv myenv
+.\myenv\Scripts\Activate.ps1
 pip install -r requirements.txt
 uvicorn main:app --reload --port 8000
 # in a second terminal:
