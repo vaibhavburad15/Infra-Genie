@@ -2,7 +2,7 @@ from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
-    database_url: str = "postgresql://postgres:password@localhost:5432/infragenie"
+    database_url: str = "postgresql://postgres:123456@localhost:5432/infragenie"
     redis_url: str = "redis://localhost:6379"
 
     kimi_k2_base_url: str = ""
