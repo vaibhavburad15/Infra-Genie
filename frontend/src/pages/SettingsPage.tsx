@@ -1,6 +1,9 @@
-import { Settings, User, Bell, Shield, Cloud, Zap } from 'lucide-react';
+import { Settings, User, Bell, Shield, Cloud, Zap, LogOut } from 'lucide-react';
+import { useAuth } from '@/context/AuthContext';
 
 export default function SettingsPage() {
+  const { logout } = useAuth();
+
   return (
     <div className="p-6 space-y-5 overflow-y-auto h-full bg-[#f4f6fa]">
       <div className="bg-white rounded-2xl p-5 border border-gray-100">
@@ -43,9 +46,18 @@ export default function SettingsPage() {
         </div>
       </div>
 
-      <div className="flex justify-end gap-2">
-        <button className="px-4 py-2 rounded-lg bg-white border border-gray-200 text-gray-500 text-sm font-medium hover:bg-gray-50 cursor-pointer transition-colors">Cancel</button>
-        <button className="px-4 py-2 rounded-lg bg-[#c9692a] text-white text-sm font-semibold hover:bg-[#b85820] cursor-pointer transition-colors">Save Changes</button>
+      <div className="flex justify-between items-center pt-2 border-t border-gray-200">
+        <button
+          onClick={logout}
+          className="px-4 py-2 rounded-lg bg-rose-50 border border-rose-200 text-rose-600 text-sm font-semibold hover:bg-rose-100 cursor-pointer transition-colors flex items-center gap-2"
+        >
+          <LogOut size={15} />
+          Sign Out
+        </button>
+        <div className="flex gap-2">
+          <button className="px-4 py-2 rounded-lg bg-white border border-gray-200 text-gray-500 text-sm font-medium hover:bg-gray-50 cursor-pointer transition-colors">Cancel</button>
+          <button className="px-4 py-2 rounded-lg bg-[#c9692a] text-white text-sm font-semibold hover:bg-[#b85820] cursor-pointer transition-colors">Save Changes</button>
+        </div>
       </div>
     </div>
   );
