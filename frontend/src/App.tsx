@@ -1,4 +1,7 @@
 import { useState } from 'react';
+import { AuthProvider, useAuth } from '@/context/AuthContext';
+import LoginPage from '@/pages/LoginPage';
+import RegisterPage from '@/pages/RegisterPage';
 import Sidebar from '@/components/Sidebar';
 import Header from '@/components/Header';
 import AIAssistant from '@/components/AIAssistant';
@@ -34,7 +37,30 @@ const pageMeta: Record<Page, { title: string; subtitle: string }> = {
   settings: { title: 'Settings', subtitle: 'Manage your account and preferences' },
 };
 
-export default function App() {
+function AuthGate() {
+  const { user, isLoading } = useAuth();
+  const [authView, setAuthView] = useState<'login' | 'register'>('login');
+
+  if (isLoading) {
+    return (
+      <div className="flex h-screen w-full items-center justify-center bg-[#f4f6fa]">
+        <p className="text-sm text-slate-500">Loading…</p>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return authView === 'login' ? (
+      <LoginPage onSwitchToRegister={() => setAuthView('register')} />
+    ) : (
+      <RegisterPage onSwitchToLogin={() => setAuthView('login')} />
+    );
+  }
+
+  return <Dashboard />;
+}
+
+function Dashboard() {
   const [activePage, setActivePage] = useState<Page>('dashboard');
   const meta = pageMeta[activePage];
 
@@ -61,10 +87,18 @@ export default function App() {
     <div className="flex h-screen w-full overflow-hidden bg-[#f4f6fa]">
       <Sidebar activePage={activePage} onNavigate={setActivePage} />
       <div className="flex-1 flex flex-col min-w-0">
-        <Header title={meta.title} subtitle={meta.subtitle} />
+        <Header title={meta.title} subtitle={meta.subtitle} onNavigate={setActivePage} />
         <main className="flex-1 overflow-hidden">{renderPage()}</main>
       </div>
       <AIAssistant />
     </div>
+  );
+}
+
+export default function App() {
+  return (
+    <AuthProvider>
+      <AuthGate />
+    </AuthProvider>
   );
 }

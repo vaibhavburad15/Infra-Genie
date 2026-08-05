@@ -12,7 +12,9 @@ import {
   Settings,
   Bot,
   ChevronRight,
+  LogOut,
 } from 'lucide-react';
+import { useAuth } from '@/context/AuthContext';
 
 type Page = 'dashboard' | 'projects' | 'agents' | 'infrastructure' | 'pipelines' | 'deployments' | 'monitoring' | 'security' | 'cost' | 'automation' | 'insights' | 'reports' | 'settings';
 
@@ -38,6 +40,8 @@ const navItems: { id: Page; label: string; icon: React.ElementType }[] = [
 ];
 
 export default function Sidebar({ activePage, onNavigate }: SidebarProps) {
+  const { logout } = useAuth();
+
   return (
     <aside className="w-56 flex-shrink-0 flex flex-col h-screen bg-white border-r border-gray-100">
       {/* Logo */}
@@ -71,6 +75,15 @@ export default function Sidebar({ activePage, onNavigate }: SidebarProps) {
               </li>
             );
           })}
+          <li className="pt-2 border-t border-gray-100 mt-2">
+            <button
+              onClick={logout}
+              className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm text-rose-600 hover:bg-rose-50 hover:text-rose-700 transition-all duration-150 cursor-pointer font-medium"
+            >
+              <LogOut size={16} className="text-rose-500" />
+              Sign Out
+            </button>
+          </li>
         </ul>
       </nav>
 
