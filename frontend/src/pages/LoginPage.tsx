@@ -19,8 +19,8 @@ export default function LoginPage({ onSwitchToRegister }: LoginPageProps) {
     setIsSubmitting(true);
     try {
       await login(email, password);
-    } catch (err: any) {
-      setError(err?.response?.data?.detail || 'Invalid email or password.');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Invalid email or password.');
     } finally {
       setIsSubmitting(false);
     }
@@ -30,11 +30,10 @@ export default function LoginPage({ onSwitchToRegister }: LoginPageProps) {
     <div className="flex h-screen w-full items-center justify-center bg-[#f4f6fa]">
       <div className="w-full max-w-sm">
         <div className="mb-8 text-center">
-          <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-xl bg-[#1e2a5e] text-lg font-bold text-white">
-            IG
+          <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center">
+            <img src="/favicon.png" alt="Infra Genie logo" className="h-10 w-10 object-contain" />
           </div>
           <h1 className="text-xl font-bold text-slate-900">Infra Genie</h1>
-          <p className="text-sm text-slate-500">AI-Powered CloudOps</p>
         </div>
 
         <div className="rounded-2xl bg-white p-8 shadow-sm">

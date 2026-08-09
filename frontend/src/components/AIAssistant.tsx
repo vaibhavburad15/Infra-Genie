@@ -1,16 +1,9 @@
 import { useState } from 'react';
 import { Sparkles, Send, Settings, Activity, DollarSign, HelpCircle, FileText } from 'lucide-react';
 
-const suggestions = [
-  { icon: Activity, text: 'Show me the health of all production resources' },
-  { icon: DollarSign, text: 'Optimize my AWS costs' },
-  { icon: HelpCircle, text: 'Why did the deployment fail in order-service?' },
-  { icon: FileText, text: 'Generate report for this month' },
-];
+const suggestions: { icon: any; text: string }[] = [];
 
-const initialMessages = [
-  { role: 'agent', text: 'Hello Vaibhav! 👋\nHow can I help you today?' },
-];
+const initialMessages: { role: string; text: string }[] = [];
 
 export default function AIAssistant() {
   const [input, setInput] = useState('');
@@ -39,7 +32,7 @@ export default function AIAssistant() {
             <Settings size={14} />
           </button>
         </div>
-        <p className="text-[#7099d8] text-xs">Your DevOps AI Companion</p>
+        <p className="text-[#7099d8] text-xs">Your Infra genie Companion</p>
       </div>
 
       {/* Messages */}

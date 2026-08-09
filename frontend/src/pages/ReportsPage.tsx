@@ -1,12 +1,6 @@
 import { FileText, Download, Calendar, TrendingDown, TrendingUp } from 'lucide-react';
 
-const reports = [
-  { title: 'Infrastructure Summary - August 2026', type: 'Monthly Report', date: 'Aug 1, 2026', size: '2.4 MB', status: 'ready' },
-  { title: 'Security Audit - Q3 2026', type: 'Quarterly Audit', date: 'Jul 28, 2026', size: '5.1 MB', status: 'ready' },
-  { title: 'Cost Analysis - July 2026', type: 'Cost Report', date: 'Jul 31, 2026', size: '1.8 MB', status: 'ready' },
-  { title: 'Deployment History - Week 31', type: 'Weekly Report', date: 'Jul 28, 2026', size: '890 KB', status: 'ready' },
-  { title: 'Compliance Check - SOC2', type: 'Compliance', date: 'Jul 25, 2026', size: '3.2 MB', status: 'generating' },
-];
+const reports: { title: string; type: string; date: string; size: string; status: string }[] = [];
 
 export default function ReportsPage() {
   return (

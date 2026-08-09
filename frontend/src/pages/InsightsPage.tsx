@@ -3,22 +3,9 @@ import {
   Brain, Sparkles, Wrench, Clock, Code,
 } from 'lucide-react';
 
-const insightCategories = [
-  { id: 'cost', label: 'Cost Optimization', icon: DollarSign, color: '#059669', count: 3, savings: '$842/mo' },
-  { id: 'security', label: 'Security', icon: Shield, color: '#ef4444', count: 2, savings: 'Critical' },
-  { id: 'performance', label: 'Performance', icon: Zap, color: '#c9692a', count: 4, savings: '~30% faster' },
-  { id: 'reliability', label: 'Reliability', icon: CheckCircle2, color: '#1e3a7a', count: 1, savings: '99.99% SLA' },
-];
+const insightCategories: { id: string; label: string; icon: any; color: string; count: number; savings: string }[] = [];
 
-const insights = [
-  { category: 'cost', priority: 'high', title: 'Switch 4 EC2 instances to Spot pricing', description: 'Your data-pipeline workers are running on on-demand instances. Switching to spot instances can save ~$340/month with minimal disruption risk.', impact: '$340/mo', effort: 'Low', agent: 'Cost Optimization AI', confidence: 94 },
-  { category: 'security', priority: 'critical', title: 'IAM role has 12 unused permissions', description: 'The auth-service IAM role grants access to 12 services it never uses. This violates least-privilege principle and increases blast radius.', impact: 'Critical', effort: 'Medium', agent: 'Security AI Agent', confidence: 99 },
-  { category: 'performance', priority: 'high', title: 'Optimize 3 slow database queries', description: 'analytics-db has 3 queries averaging >2s. Adding composite indexes on user_events and session_data tables will reduce to ~200ms.', impact: '10x faster', effort: 'Low', agent: 'Performance AI Agent', confidence: 91 },
-  { category: 'cost', priority: 'medium', title: 'Remove 6 unattached EBS volumes', description: '6 EBS volumes are unattached and costing $52/month. Safe to delete after snapshot verification.', impact: '$52/mo', effort: 'Trivial', agent: 'Cost Optimization AI', confidence: 100 },
-  { category: 'performance', priority: 'medium', title: 'Enable HTTP/2 on API gateway', description: 'Your API gateway is using HTTP/1.1. Enabling HTTP/2 will reduce latency by ~40% for multi-request clients through connection multiplexing.', impact: '~40% latency', effort: 'Low', agent: 'Performance AI Agent', confidence: 87 },
-  { category: 'security', priority: 'high', title: 'Update 3 containers with known CVEs', description: 'notification-engine, analytics-api, and mobile-bff are running base images with known vulnerabilities (CVE-2024-1234, CVE-2024-5678).', impact: 'High', effort: 'Low', agent: 'Security AI Agent', confidence: 100 },
-  { category: 'reliability', priority: 'medium', title: 'Add multi-AZ deployment for notification-engine', description: 'notification-engine runs in a single AZ. Deploying across 2 AZs with a load balancer will achieve 99.99% availability SLA.', impact: '99.99% SLA', effort: 'Medium', agent: 'Reliability AI Agent', confidence: 95 },
-];
+const insights: { category: string; priority: string; title: string; description: string; impact: string; effort: string; agent: string; confidence: number }[] = [];
 
 const priorityConfig: Record<string, { bg: string; text: string; border: string; label: string }> = {
   critical: { bg: 'bg-red-50', text: 'text-red-600', border: 'border-red-200', label: 'Critical' },

@@ -1,13 +1,6 @@
 import { Server, Cloud, Database, Cpu, HardDrive, Network, Boxes, Layers, Activity } from 'lucide-react';
 
-const resources = [
-  { name: 'EC2 Instances', provider: 'AWS', count: 48, region: 'us-east-1', status: 'healthy', icon: Server, color: '#1e3a7a' },
-  { name: 'RDS Databases', provider: 'AWS', count: 12, region: 'us-east-1', status: 'healthy', icon: Database, color: '#c9692a' },
-  { name: 'Azure VMs', provider: 'Azure', count: 24, region: 'eastus', status: 'healthy', icon: Cloud, color: '#4a72c4' },
-  { name: 'GKE Cluster', provider: 'GCP', count: 3, region: 'us-central1', status: 'healthy', icon: Boxes, color: '#059669' },
-  { name: 'Load Balancers', provider: 'AWS', count: 8, region: 'us-east-1', status: 'healthy', icon: Network, color: '#7099d8' },
-  { name: 'Kubernetes Pods', provider: 'AWS', count: 156, region: 'us-east-1', status: 'degraded', icon: Layers, color: '#ef4444' },
-];
+const resources: { name: string; provider: string; count: number; region: string; status: string; icon: any; color: string }[] = [];
 
 const statusConfig: Record<string, { dot: string; text: string; bg: string; label: string }> = {
   healthy: { dot: 'bg-emerald-500', text: 'text-emerald-600', bg: 'bg-emerald-50', label: 'Healthy' },

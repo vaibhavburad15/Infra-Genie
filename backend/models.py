@@ -8,7 +8,7 @@ from typing import Optional, List
 
 from sqlalchemy import (
     Column, String, Text, DateTime, Boolean, ForeignKey,
-    JSON, Enum as SAEnum, create_engine
+    JSON, Enum as SAEnum, create_engine, text
 )
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import declarative_base, relationship, sessionmaker
@@ -37,6 +37,7 @@ async def get_db():
 async def init_db():
     async with async_engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS role VARCHAR(50) NOT NULL DEFAULT 'user'"))
 
 
 # ── Enums ─────────────────────────────────────────────────────────────────────
@@ -67,6 +68,7 @@ class User(Base):
     email = Column(String(255), unique=True, nullable=False, index=True)
     username = Column(String(100), unique=True, nullable=False)
     hashed_password = Column(String(255), nullable=False)
+    role = Column(String(50), nullable=False, default="user")
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
@@ -132,12 +134,23 @@ class UserCreate(BaseModel):
     email: EmailStr
     username: str
     password: str
+    role: str = "user"
+
+
+class EmailOtpRequest(BaseModel):
+    email: EmailStr
+
+
+class EmailOtpVerify(BaseModel):
+    email: EmailStr
+    otp: str
 
 
 class UserOut(BaseModel):
     id: uuid.UUID
     email: str
     username: str
+    role: str
     is_active: bool
     created_at: datetime
 

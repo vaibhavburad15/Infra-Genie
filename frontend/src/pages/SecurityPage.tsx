@@ -1,11 +1,6 @@
 import { Shield, AlertTriangle, CheckCircle2, XCircle, Clock } from 'lucide-react';
 
-const vulnerabilities = [
-  { severity: 'critical', title: 'CVE-2024-1234 in notification-engine', desc: 'Remote code execution in openssl base image', resource: 'notification-engine', status: 'open', time: '32m ago' },
-  { severity: 'high', title: 'CVE-2024-5678 in analytics-api', desc: 'SQL injection in postgres driver', resource: 'analytics-api', status: 'open', time: '1h ago' },
-  { severity: 'medium', title: 'CVE-2024-9012 in mobile-bff', desc: 'XSS vulnerability in swagger UI', resource: 'mobile-bff', status: 'open', time: '3h ago' },
-  { severity: 'low', title: 'Outdated package in payment-gateway', desc: 'go.mod has 2 outdated dependencies', resource: 'payment-gateway', status: 'resolved', time: '5h ago' },
-];
+const vulnerabilities: { severity: string; title: string; desc: string; resource: string; status: string; time: string }[] = [];
 
 const severityConfig: Record<string, { bg: string; text: string; border: string; label: string }> = {
   critical: { bg: 'bg-red-50', text: 'text-red-600', border: 'border-red-200', label: 'Critical' },

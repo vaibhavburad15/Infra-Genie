@@ -11,7 +11,6 @@ import {
   FileText,
   Settings,
   Bot,
-  ChevronRight,
   LogOut,
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
@@ -46,10 +45,12 @@ export default function Sidebar({ activePage, onNavigate }: SidebarProps) {
     <aside className="w-56 flex-shrink-0 flex flex-col h-screen bg-white border-r border-gray-100">
       {/* Logo */}
       <div className="flex items-center gap-3 px-5 py-5 border-b border-gray-100">
-        <img src="/logo.png" alt="Infra Genie" className="w-10 h-10 object-contain flex-shrink-0" />
-        <div>
-          <p className="font-bold text-[#1e3a7a] text-base leading-tight">Infra Genie</p>
-          <p className="text-[10px] text-gray-400 leading-tight">AI-Powered CloudOps</p>
+        <img src="/favicon.png" alt="Infra Genie" className="w-10 h-10 object-contain flex-shrink-0" />
+        <div className="leading-tight">
+          <p className="font-bold text-base leading-tight">
+            <span className="text-[#1e3a7a]">Infra </span>
+            <span className="text-[#c9692a]">Genie</span>
+          </p>
         </div>
       </div>
 
@@ -86,20 +87,6 @@ export default function Sidebar({ activePage, onNavigate }: SidebarProps) {
           </li>
         </ul>
       </nav>
-
-      {/* Bottom promo card */}
-      <div className="mx-3 mb-4 rounded-xl bg-gradient-to-br from-[#1e3a7a] to-[#24478f] p-4">
-        <div className="flex items-center gap-2 mb-1">
-          <div className="w-6 h-6 rounded-md bg-[#c9692a] flex items-center justify-center">
-            <Zap size={12} className="text-white" />
-          </div>
-          <p className="text-white text-xs font-bold">DevOpsIQ AI</p>
-        </div>
-        <p className="text-blue-200 text-[10px] leading-relaxed mb-3">Smart Automation for Smarter Operations</p>
-        <button className="flex items-center gap-1 text-white text-[10px] font-semibold hover:gap-2 transition-all cursor-pointer">
-          Learn more <ChevronRight size={11} />
-        </button>
-      </div>
     </aside>
   );
 }

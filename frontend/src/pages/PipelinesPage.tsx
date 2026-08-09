@@ -1,12 +1,6 @@
 import { GitBranch, CheckCircle2, Clock, XCircle, Loader, ChevronRight } from 'lucide-react';
 
-const pipelines = [
-  { name: 'payment-gateway-ci', project: 'payment-gateway', status: 'success', lastRun: '2m ago', duration: '4m 32s', stages: 6, trigger: 'Push to main' },
-  { name: 'auth-service-ci', project: 'user-auth-service', status: 'running', lastRun: '8m ago', duration: '3m 15s', stages: 5, trigger: 'PR #234' },
-  { name: 'analytics-deploy', project: 'analytics-dashboard', status: 'success', lastRun: '15m ago', duration: '6m 45s', stages: 7, trigger: 'Manual' },
-  { name: 'notification-cd', project: 'notification-engine', status: 'failed', lastRun: '32m ago', duration: '2m 18s', stages: 6, trigger: 'Tag v0.8.5' },
-  { name: 'etl-pipeline', project: 'data-pipeline-etl', status: 'success', lastRun: '1h ago', duration: '8m 02s', stages: 8, trigger: 'Schedule' },
-];
+const pipelines: { name: string; project: string; status: string; lastRun: string; duration: string; stages: number; trigger: string }[] = [];
 
 const statusConfig: Record<string, { dot: string; text: string; bg: string; label: string; icon: typeof CheckCircle2 }> = {
   success: { dot: 'bg-emerald-500', text: 'text-emerald-600', bg: 'bg-emerald-50', label: 'Success', icon: CheckCircle2 },

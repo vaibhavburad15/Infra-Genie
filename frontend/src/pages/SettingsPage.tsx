@@ -1,17 +1,26 @@
 import { Settings, User, Bell, Shield, Cloud, Zap, LogOut } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
+import type { UserRole } from '@/api';
+
+const roleLabels: Record<UserRole, string> = {
+  user: 'User',
+  developer: 'Developer',
+  devops_engineer: 'DevOps Engineer',
+  admin: 'Admin',
+};
 
 export default function SettingsPage() {
-  const { logout } = useAuth();
+  const { user, logout } = useAuth();
+  const displayRole = user?.role ? roleLabels[user.role] : 'User';
 
   return (
     <div className="p-6 space-y-5 overflow-y-auto h-full bg-[#f4f6fa]">
       <div className="bg-white rounded-2xl p-5 border border-gray-100">
         <div className="flex items-center gap-3 mb-5"><div className="w-10 h-10 rounded-xl bg-[#edf3fb] flex items-center justify-center"><User size={18} className="text-[#1e3a7a]" /></div><h3 className="text-gray-800 font-bold text-sm">Profile Settings</h3></div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div><label className="text-gray-400 text-xs block mb-1.5">Full Name</label><input type="text" defaultValue="Vaibhav" className="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-700 focus:outline-none focus:border-[#1e3a7a]" /></div>
-          <div><label className="text-gray-400 text-xs block mb-1.5">Email</label><input type="email" defaultValue="admin@infragenie.io" className="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-700 focus:outline-none focus:border-[#1e3a7a]" /></div>
-          <div><label className="text-gray-400 text-xs block mb-1.5">Role</label><input type="text" defaultValue="Admin" disabled className="w-full bg-gray-100 border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-400" /></div>
+          <div><label className="text-gray-400 text-xs block mb-1.5">Full Name</label><input type="text" defaultValue={user?.username || 'Vaibhav'} className="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-700 focus:outline-none focus:border-[#1e3a7a]" /></div>
+          <div><label className="text-gray-400 text-xs block mb-1.5">Email</label><input type="email" defaultValue={user?.email || 'admin@infragenie.io'} className="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-700 focus:outline-none focus:border-[#1e3a7a]" /></div>
+          <div><label className="text-gray-400 text-xs block mb-1.5">Role</label><input type="text" defaultValue={displayRole} disabled className="w-full bg-gray-100 border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-400" /></div>
           <div><label className="text-gray-400 text-xs block mb-1.5">Timezone</label><select className="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-700 focus:outline-none focus:border-[#1e3a7a] cursor-pointer"><option>UTC</option><option>IST (UTC+5:30)</option><option>EST (UTC-5)</option></select></div>
         </div>
       </div>

@@ -3,28 +3,11 @@ import {
   CheckCircle2, TrendingUp, TrendingDown, Gauge, Zap, Clock,
 } from 'lucide-react';
 
-const services = [
-  { name: 'payment-gateway', status: 'healthy', latency: '42ms', uptime: '99.98%', errorRate: '0.02%', requests: '1.2M', region: 'us-east-1' },
-  { name: 'user-auth-service', status: 'healthy', latency: '28ms', uptime: '99.95%', errorRate: '0.05%', requests: '890K', region: 'us-east-1' },
-  { name: 'analytics-api', status: 'healthy', latency: '156ms', uptime: '99.91%', errorRate: '0.09%', requests: '450K', region: 'eu-west-1' },
-  { name: 'notification-engine', status: 'degraded', latency: '890ms', uptime: '98.72%', errorRate: '1.28%', requests: '230K', region: 'us-west-2' },
-  { name: 'data-pipeline-etl', status: 'healthy', latency: '320ms', uptime: '99.88%', errorRate: '0.12%', requests: '1.8M', region: 'us-east-1' },
-  { name: 'mobile-bff', status: 'healthy', latency: '55ms', uptime: '99.96%', errorRate: '0.04%', requests: '670K', region: 'ap-south-1' },
-];
+const services: { name: string; status: string; latency: string; uptime: string; errorRate: string; requests: string; region: string }[] = [];
 
-const alerts = [
-  { severity: 'critical', service: 'notification-engine', message: 'Error rate exceeded 1% threshold (1.28%)', time: '5m ago' },
-  { severity: 'warning', service: 'analytics-api', message: 'P99 latency above 150ms target (156ms)', time: '18m ago' },
-  { severity: 'info', service: 'data-pipeline-etl', message: 'Auto-scaled from 4 to 8 workers', time: '32m ago' },
-  { severity: 'warning', service: 'payment-gateway', message: 'Memory usage approaching 80%', time: '1h ago' },
-];
+const alerts: { severity: string; service: string; message: string; time: string }[] = [];
 
-const metrics = [
-  { label: 'Avg Response Time', value: '124ms', change: '-8ms', trend: 'down', icon: Gauge, color: '#1e3a7a', bg: 'bg-[#edf3fb]' },
-  { label: 'Requests / min', value: '48.2K', change: '+12%', trend: 'up', icon: Activity, color: '#c9692a', bg: 'bg-[#fdf3eb]' },
-  { label: 'Error Rate', value: '0.14%', change: '-0.03%', trend: 'down', icon: AlertTriangle, color: '#059669', bg: 'bg-emerald-50' },
-  { label: 'Active Alerts', value: '4', change: '+1', trend: 'up', icon: Zap, color: '#ef4444', bg: 'bg-red-50' },
-];
+const metrics: { label: string; value: string; change: string; trend: string; icon: any; color: string; bg: string }[] = [];
 
 const severityConfig: Record<string, { bg: string; text: string; border: string; label: string }> = {
   critical: { bg: 'bg-red-50', text: 'text-red-600', border: 'border-red-200', label: 'Critical' },
@@ -38,10 +21,11 @@ const statusConfig: Record<string, { dot: string; text: string; bg: string; labe
   down: { dot: 'bg-red-500 animate-pulse', text: 'text-red-600', bg: 'bg-red-50', label: 'Down' },
 };
 
-const chartData = [40, 55, 42, 60, 48, 72, 58, 65, 50, 68, 75, 62, 80, 72, 68];
-const latencyData = [120, 135, 110, 145, 98, 125, 140, 105, 130, 115, 142, 108, 134, 122, 118];
+const chartData: number[] = [];
+const latencyData: number[] = [];
 
 function Sparkline({ data, color, height = 100 }: { data: number[]; color: string; height?: number }) {
+  if (!data || data.length === 0) return null;
   const max = Math.max(...data);
   const min = Math.min(...data);
   const range = max - min || 1;

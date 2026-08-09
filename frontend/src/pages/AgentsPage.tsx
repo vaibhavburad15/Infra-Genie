@@ -10,14 +10,7 @@ interface Agent {
   load: number; description: string; lastAction: string; color: string;
 }
 
-const agents: Agent[] = [
-  { id: 'docker', name: 'Docker AI Agent', type: 'Containerization', icon: Boxes, status: 'active', tasksCompleted: 1247, successRate: 98.4, load: 78, description: 'Builds, optimizes, and manages Docker containers automatically', lastAction: 'Optimized payment-gateway image (reduced 340MB)', color: '#1e3a7a' },
-  { id: 'terraform', name: 'Terraform AI Agent', type: 'Infrastructure as Code', icon: GitBranch, status: 'active', tasksCompleted: 892, successRate: 99.1, load: 45, description: 'Provisions and manages cloud infrastructure using Terraform', lastAction: 'Applied 3 resource changes to staging environment', color: '#c9692a' },
-  { id: 'kubernetes', name: 'Kubernetes AI Agent', type: 'Orchestration', icon: Cloud, status: 'active', tasksCompleted: 1538, successRate: 97.8, load: 62, description: 'Manages K8s deployments, scaling, and pod health', lastAction: 'Scaled analytics-api from 3 to 6 pods', color: '#4a72c4' },
-  { id: 'cicd', name: 'CI/CD AI Agent', type: 'Pipeline Automation', icon: GitBranch, status: 'idle', tasksCompleted: 654, successRate: 96.2, load: 12, description: 'Automates build, test, and deployment pipelines', lastAction: 'Triggered build for auth-gateway PR #234', color: '#7099d8' },
-  { id: 'security', name: 'Security AI Agent', type: 'Compliance & Scanning', icon: Shield, status: 'active', tasksCompleted: 2841, successRate: 99.7, load: 89, description: 'Continuous security scanning, vulnerability detection, and compliance', lastAction: 'Blocked deployment: CVE-2024-1234 detected', color: '#ef4444' },
-  { id: 'cost', name: 'Cost Optimization AI', type: 'FinOps', icon: DollarSign, status: 'active', tasksCompleted: 423, successRate: 94.3, load: 34, description: 'Monitors and optimizes cloud spend across all resources', lastAction: 'Recommended spot instances for 4 EC2 workloads ($340/mo savings)', color: '#059669' },
-];
+const agents: Agent[] = [];
 
 const statusConfig: Record<string, { dot: string; text: string; bg: string; label: string }> = {
   active: { dot: 'bg-emerald-500 animate-pulse', text: 'text-emerald-600', bg: 'bg-emerald-50', label: 'Active' },
@@ -25,19 +18,14 @@ const statusConfig: Record<string, { dot: string; text: string; bg: string; labe
   paused: { dot: 'bg-amber-500', text: 'text-amber-600', bg: 'bg-amber-50', label: 'Paused' },
 };
 
-const chatMessages = [
-  { role: 'agent', agent: 'Docker AI', text: 'I detected the payment-gateway image is 340MB larger than optimal. Would you like me to optimize it?', time: '10:42 AM' },
-  { role: 'user', text: 'Yes, go ahead. Use multi-stage build.', time: '10:43 AM' },
-  { role: 'agent', agent: 'Docker AI', text: 'Applying multi-stage build with alpine base. Estimated reduction: ~280MB. Starting now...', time: '10:43 AM' },
-  { role: 'agent', agent: 'Docker AI', text: 'Optimization complete. New image size: 89MB (reduced 71%). Build time: 2m 14s. Ready for deployment.', time: '10:45 AM' },
-];
+const chatMessages: { role: string; agent?: string; text: string; time: string }[] = [];
 
 export default function AgentsPage() {
-  const [selectedAgent, setSelectedAgent] = useState('docker');
+  const [selectedAgent, setSelectedAgent] = useState('');
   const [message, setMessage] = useState('');
-  const activeAgent = agents.find((a) => a.id === selectedAgent) || agents[0];
-  const AgentIcon = activeAgent.icon;
-  const sc = statusConfig[activeAgent.status];
+  const activeAgent = agents.find((a) => a.id === selectedAgent) || null;
+  const AgentIcon = (activeAgent && activeAgent.icon) || Boxes;
+  const sc = activeAgent ? statusConfig[activeAgent.status] : statusConfig['idle'];
 
   return (
     <div className="flex h-full overflow-hidden bg-[#f4f6fa]">
@@ -84,14 +72,14 @@ export default function AgentsPage() {
       <div className="w-80 border-l border-gray-100 flex flex-col flex-shrink-0 bg-white">
         <div className="p-4 border-b border-gray-100">
           <div className="flex items-center gap-3 mb-3">
-            <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: `${activeAgent.color}15`, color: activeAgent.color }}><AgentIcon size={18} /></div>
-            <div className="flex-1 min-w-0"><h3 className="text-gray-800 text-sm font-bold truncate">{activeAgent.name}</h3><span className={`inline-flex items-center gap-1 text-xs ${sc.text}`}><span className={`w-1.5 h-1.5 rounded-full ${sc.dot}`} />{sc.label}</span></div>
+            <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: `${activeAgent?.color || '#ddd'}15`, color: activeAgent?.color || '#333' }}><AgentIcon size={18} /></div>
+            <div className="flex-1 min-w-0"><h3 className="text-gray-800 text-sm font-bold truncate">{activeAgent?.name || 'No agent selected'}</h3><span className={`inline-flex items-center gap-1 text-xs ${sc.text}`}><span className={`w-1.5 h-1.5 rounded-full ${sc.dot}`} />{sc.label}</span></div>
             <button className="w-7 h-7 flex items-center justify-center rounded-lg bg-gray-50 text-gray-400 hover:text-[#c9692a] cursor-pointer"><Settings size={13} /></button>
           </div>
           <div className="grid grid-cols-3 gap-2">
-            <div className="text-center p-2 rounded-lg bg-gray-50"><Activity size={12} className="text-[#c9692a] mx-auto mb-1" /><p className="text-gray-800 text-xs font-bold">{activeAgent.load}%</p><p className="text-gray-400 text-[9px]">Load</p></div>
-            <div className="text-center p-2 rounded-lg bg-gray-50"><Zap size={12} className="text-[#c9692a] mx-auto mb-1" /><p className="text-gray-800 text-xs font-bold">{activeAgent.successRate}%</p><p className="text-gray-400 text-[9px]">Success</p></div>
-            <div className="text-center p-2 rounded-lg bg-gray-50"><Brain size={12} className="text-[#c9692a] mx-auto mb-1" /><p className="text-gray-800 text-xs font-bold">{activeAgent.tasksCompleted.toLocaleString()}</p><p className="text-gray-400 text-[9px]">Tasks</p></div>
+            <div className="text-center p-2 rounded-lg bg-gray-50"><Activity size={12} className="text-[#c9692a] mx-auto mb-1" /><p className="text-gray-800 text-xs font-bold">{activeAgent?.load ?? 0}%</p><p className="text-gray-400 text-[9px]">Load</p></div>
+            <div className="text-center p-2 rounded-lg bg-gray-50"><Zap size={12} className="text-[#c9692a] mx-auto mb-1" /><p className="text-gray-800 text-xs font-bold">{activeAgent?.successRate ?? 0}%</p><p className="text-gray-400 text-[9px]">Success</p></div>
+            <div className="text-center p-2 rounded-lg bg-gray-50"><Brain size={12} className="text-[#c9692a] mx-auto mb-1" /><p className="text-gray-800 text-xs font-bold">{activeAgent?.tasksCompleted ? activeAgent.tasksCompleted.toLocaleString() : '0'}</p><p className="text-gray-400 text-[9px]">Tasks</p></div>
           </div>
         </div>
         <div className="flex-1 flex flex-col min-h-0">

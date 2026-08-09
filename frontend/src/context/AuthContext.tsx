@@ -1,13 +1,13 @@
 // src/context/AuthContext.tsx
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import * as api from '@/api';
-import type { User } from '@/api';
+import type { User, UserRole } from '@/api';
 
 interface AuthContextType {
   user: User | null;
   isLoading: boolean;
   login: (email: string, password: string) => Promise<void>;
-  register: (email: string, username: string, password: string) => Promise<void>;
+  register: (email: string, username: string, password: string, role: UserRole) => Promise<void>;
   logout: () => void;
 }
 
@@ -39,8 +39,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(data.user);
   }
 
-  async function register(email: string, username: string, password: string) {
-    const data = await api.register({ email, username, password });
+  async function register(email: string, username: string, password: string, role: UserRole) {
+    const data = await api.register({ email, username, password, role });
     setUser(data.user);
   }
 

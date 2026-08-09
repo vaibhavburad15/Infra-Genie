@@ -1,13 +1,6 @@
 import { Zap, Bot, CheckCircle2, Clock, Settings } from 'lucide-react';
 
-const automations = [
-  { name: 'Auto-Scale on High Load', trigger: 'CPU > 80% for 5 min', action: 'Scale out +2 pods', status: 'active', runs: 47, lastRun: '32m ago' },
-  { name: 'Auto-Heal Failed Pods', trigger: 'Pod crash detected', action: 'Restart pod + alert', status: 'active', runs: 12, lastRun: '1h ago' },
-  { name: 'Cost Alert', trigger: 'Daily spend > budget', action: 'Notify + suggest optimizations', status: 'active', runs: 5, lastRun: '6h ago' },
-  { name: 'Security Patch', trigger: 'New CVE detected', action: 'Auto-patch + rebuild', status: 'paused', runs: 23, lastRun: '2d ago' },
-  { name: 'Backup Rotation', trigger: 'Every 24 hours', action: 'Snapshot all databases', status: 'active', runs: 156, lastRun: '12h ago' },
-  { name: 'Log Cleanup', trigger: 'Storage > 80%', action: 'Archive logs older than 30 days', status: 'active', runs: 8, lastRun: '3h ago' },
-];
+const automations: { name: string; trigger: string; action: string; status: string; runs: number; lastRun: string; }[] = [];
 
 const statusConfig: Record<string, { dot: string; text: string; bg: string; label: string }> = {
   active: { dot: 'bg-emerald-500 animate-pulse', text: 'text-emerald-600', bg: 'bg-emerald-50', label: 'Active' },

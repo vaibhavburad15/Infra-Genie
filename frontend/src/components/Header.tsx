@@ -1,12 +1,20 @@
 import { useState, useRef, useEffect } from 'react';
 import { Search, Bell, HelpCircle, ChevronDown, Command, LogOut, Settings as SettingsIcon } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
+import type { UserRole } from '@/api';
 
 interface HeaderProps {
   title: string;
   subtitle: string;
   onNavigate?: (page: 'settings' | any) => void;
 }
+
+const roleLabels: Record<UserRole, string> = {
+  user: 'User',
+  developer: 'Developer',
+  devops_engineer: 'DevOps Engineer',
+  admin: 'Admin',
+};
 
 export default function Header({ title, subtitle, onNavigate }: HeaderProps) {
   const { user, logout } = useAuth();
@@ -26,6 +34,7 @@ export default function Header({ title, subtitle, onNavigate }: HeaderProps) {
   const initial = user?.username ? user.username.charAt(0).toUpperCase() : 'V';
   const displayName = user?.username || 'Vaibhav';
   const displayEmail = user?.email || 'admin@infragenie.io';
+  const displayRole = user?.role ? roleLabels[user.role] : 'User';
 
   const handleLogout = () => {
     setDropdownOpen(false);
@@ -78,7 +87,7 @@ export default function Header({ title, subtitle, onNavigate }: HeaderProps) {
             </div>
             <div className="text-left">
               <p className="text-gray-800 text-xs font-semibold leading-tight">{displayName}</p>
-              <p className="text-gray-400 text-[10px] leading-tight">Admin</p>
+              <p className="text-gray-400 text-[10px] leading-tight">{displayRole}</p>
             </div>
             <ChevronDown size={12} className={`text-gray-400 transition-transform duration-200 ${dropdownOpen ? 'rotate-180' : ''}`} />
           </button>

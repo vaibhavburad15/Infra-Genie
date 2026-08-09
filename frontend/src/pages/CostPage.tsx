@@ -1,25 +1,11 @@
 import { DollarSign, TrendingDown, TrendingUp, ArrowUp, ArrowDown } from 'lucide-react';
 
-const costByService = [
-  { service: 'EC2 Compute', cost: 4820, budget: 5500, color: '#1e3a7a' },
-  { service: 'RDS Database', cost: 2340, budget: 2800, color: '#c9692a' },
-  { service: 'S3 Storage', cost: 890, budget: 1200, color: '#059669' },
-  { service: 'Lambda', cost: 420, budget: 600, color: '#4a72c4' },
-  { service: 'Networking', cost: 1280, budget: 1500, color: '#7099d8' },
-  { service: 'Other', cost: 2650, budget: 3000, color: '#a8c1ea' },
-];
+const costByService: { service: string; cost: number; budget: number; color: string }[] = [];
 
-const monthlyData = [
-  { month: 'Jan', cost: 14200 },
-  { month: 'Feb', cost: 13800 },
-  { month: 'Mar', cost: 14500 },
-  { month: 'Apr', cost: 13100 },
-  { month: 'May', cost: 12600 },
-  { month: 'Jun', cost: 12400 },
-];
+const monthlyData: { month: string; cost: number }[] = [];
 
 export default function CostPage() {
-  const maxCost = Math.max(...monthlyData.map((d) => d.cost));
+  const maxCost = monthlyData.length ? Math.max(...monthlyData.map((d) => d.cost)) : 1;
   return (
     <div className="p-6 space-y-5 overflow-y-auto h-full bg-[#f4f6fa]">
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">

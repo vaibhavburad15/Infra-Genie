@@ -5,6 +5,14 @@ class Settings(BaseSettings):
     database_url: str = "postgresql://postgres:123456@localhost:5432/infragenie"
     redis_url: str = "redis://localhost:6379"
 
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_username: str = ""
+    smtp_password: str = ""
+    smtp_from_email: str = ""
+    smtp_use_tls: bool = True
+    email_otp_expire_minutes: int = 10
+
     kimi_k2_base_url: str = ""
     kimi_k2_api_key: str = ""
 
@@ -15,7 +23,7 @@ class Settings(BaseSettings):
     frontend_url: str = "http://localhost:5173"
 
     class Config:
-        env_file = ".env"
+        env_file = ("../.env", ".env")
 
 
 settings = Settings()

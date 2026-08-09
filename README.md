@@ -36,6 +36,11 @@ Fill in:
 - `KIMI_K2_BASE_URL` — your vLLM server address (e.g. `http://gpu-server:8080`)
 - `KIMI_K2_API_KEY` — API key if required
 - `SECRET_KEY` — random secret for JWT signing
+- `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_FROM_EMAIL` — mail server settings for email OTP
+- `SMTP_USE_TLS=true` — keep enabled for most SMTP providers
+- `EMAIL_OTP_EXPIRE_MINUTES` — OTP lifetime, defaults to 10
+
+If you do not configure SMTP, the backend prints OTPs to the server console in development so you can still test the registration flow.
 
 ### 2. Start services with Docker Compose
 ```bash

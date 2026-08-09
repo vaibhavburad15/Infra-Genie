@@ -18,18 +18,42 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     localStorage.removeItem('access_token');
   }
   if (!res.ok) {
-    const errorText = await res.text().catch(() => '');
-    throw new Error(`API Error ${res.status}: ${errorText}`);
+    const fallback = `API Error ${res.status}`;
+    const contentType = res.headers.get('content-type') || '';
+    let message = fallback;
+
+    if (contentType.includes('application/json')) {
+      const errorBody = await res.json().catch(() => null);
+      const detail = errorBody?.detail;
+
+      if (typeof detail === 'string') {
+        message = detail;
+      } else if (Array.isArray(detail)) {
+        message = detail
+          .map((item) => item?.msg)
+          .filter(Boolean)
+          .join(', ') || fallback;
+      } else if (typeof errorBody?.message === 'string') {
+        message = errorBody.message;
+      }
+    } else {
+      message = (await res.text().catch(() => '')) || fallback;
+    }
+
+    throw new Error(message);
   }
   return res.json();
 }
 
 // ── Types ─────────────────────────────────────────────────────────────────
 
+export type UserRole = 'user' | 'developer' | 'devops_engineer' | 'admin';
+
 export interface User {
   id: string;
   email: string;
   username: string;
+  role: UserRole;
   is_active: boolean;
 }
 
@@ -37,6 +61,16 @@ export interface TokenResponse {
   access_token: string;
   token_type?: string;
   user: User;
+}
+
+export interface EmailOtpRequestResponse {
+  message: string;
+  expires_in_minutes: number;
+  dev_otp?: string;
+}
+
+export interface EmailOtpVerifyResponse {
+  message: string;
 }
 
 export interface Project {
@@ -55,6 +89,7 @@ export async function register(payload: {
   email: string;
   username: string;
   password: string;
+  role: UserRole;
 }): Promise<TokenResponse> {
   const data = await request<TokenResponse>('/auth/register', {
     method: 'POST',
@@ -63,6 +98,22 @@ export async function register(payload: {
   });
   localStorage.setItem('access_token', data.access_token);
   return data;
+}
+
+export async function requestEmailOtp(payload: { email: string }): Promise<EmailOtpRequestResponse> {
+  return request<EmailOtpRequestResponse>('/auth/email-otp/request', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function verifyEmailOtp(payload: { email: string; otp: string }): Promise<EmailOtpVerifyResponse> {
+  return request<EmailOtpVerifyResponse>('/auth/email-otp/verify', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
 }
 
 export async function login(payload: { email: string; password: string }): Promise<TokenResponse> {

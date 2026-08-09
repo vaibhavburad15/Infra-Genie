@@ -3,9 +3,12 @@ InfraGenie — FastAPI Backend
 Routes: /auth, /projects, /deployments, /reports, /stream
 """
 import os
+import smtplib
 import uuid
 import shutil
+import secrets
 from datetime import datetime, timedelta
+from email.message import EmailMessage
 from typing import List, Optional
 from pathlib import Path
 
@@ -25,13 +28,31 @@ from config import settings
 from models import (
     init_db, get_db,
     User, Project, Deployment, Report,
-    UserCreate, UserOut, TokenResponse,
+    UserCreate, UserOut, TokenResponse, EmailOtpRequest, EmailOtpVerify,
     ProjectCreate, ProjectOut,
     DeploymentOut, ReportOut, ApproveDeployment,
     ProjectStatus, DeploymentStatus,
 )
 from tasks import get_queue, task_analyze_project, task_run_deployment
 from llm import chat_stream
+
+# Install simple signal handlers so subprocesses exit cleanly on Ctrl+C
+import signal
+import sys
+
+def _exit_gracefully(signum, frame):
+    # Use sys.exit to ensure a clean shutdown without an exception traceback
+    try:
+        sys.exit(0)
+    except SystemExit:
+        pass
+
+for _sig in (signal.SIGINT, signal.SIGTERM):
+    try:
+        signal.signal(_sig, _exit_gracefully)
+    except Exception:
+        # Some platforms may not support signal handling identically; ignore failures
+        pass
 
 # ── App setup ─────────────────────────────────────────────────────────────────
 
@@ -50,6 +71,9 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
+ADMIN_CONTACT_MESSAGE = "Admin accounts cannot be created from registration. Contact Vaibhav or Raj for admin access."
+SELF_SERVICE_ROLES = {"user", "developer", "devops_engineer"}
+EMAIL_OTP_STORE: dict[str, dict[str, object]] = {}
 
 
 @app.on_event("startup")
@@ -72,6 +96,62 @@ def create_access_token(data: dict) -> str:
     expire = datetime.utcnow() + timedelta(minutes=settings.access_token_expire_minutes)
     to_encode.update({"exp": expire})
     return jwt.encode(to_encode, settings.secret_key, algorithm="HS256")
+
+
+def normalize_email(email: str) -> str:
+    return email.strip().lower()
+
+
+def create_email_otp() -> str:
+    return f"{secrets.randbelow(1_000_000):06d}"
+
+
+def store_email_otp(email: str, otp: str) -> None:
+    EMAIL_OTP_STORE[normalize_email(email)] = {
+        "otp": otp,
+        "expires_at": datetime.utcnow() + timedelta(minutes=settings.email_otp_expire_minutes),
+        "verified": False,
+    }
+
+
+def send_email_otp(email: str, otp: str) -> None:
+    if not settings.smtp_host:
+        print(f"[OTP] {email}: {otp}")
+        return
+
+    message = EmailMessage()
+    message["Subject"] = "Infra Genie email verification code"
+    message["From"] = settings.smtp_from_email or settings.smtp_username or "no-reply@infragenie.io"
+    message["To"] = email
+    message.set_content(
+        "Your Infra Genie verification code is {otp}. It expires in {minutes} minutes.".format(
+            otp=otp,
+            minutes=settings.email_otp_expire_minutes,
+        )
+    )
+
+    with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=10) as smtp:
+        if settings.smtp_use_tls:
+            smtp.starttls()
+        smtp_username = settings.smtp_username or settings.smtp_from_email
+        if smtp_username and settings.smtp_password:
+            smtp_password = settings.smtp_password.replace(" ", "")
+            smtp.login(smtp_username, smtp_password)
+        smtp.send_message(message)
+
+
+def get_valid_otp_entry(email: str) -> Optional[dict[str, object]]:
+    email_key = normalize_email(email)
+    otp_entry = EMAIL_OTP_STORE.get(email_key)
+    if not otp_entry:
+        return None
+
+    expires_at = otp_entry.get("expires_at")
+    if not isinstance(expires_at, datetime) or expires_at < datetime.utcnow():
+        EMAIL_OTP_STORE.pop(email_key, None)
+        return None
+
+    return otp_entry
 
 
 async def get_current_user(token: str = Depends(oauth2_scheme), db: AsyncSession = Depends(get_db)) -> User:
@@ -97,21 +177,79 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: AsyncSession
 
 # ── Auth routes ───────────────────────────────────────────────────────────────
 
+
+@app.post("/auth/email-otp/request", tags=["auth"])
+async def request_email_otp(payload: EmailOtpRequest, db: AsyncSession = Depends(get_db)):
+    existing = await db.execute(select(User).where(User.email == payload.email))
+    if existing.scalar_one_or_none():
+        raise HTTPException(status_code=400, detail="Email already registered")
+
+    otp = create_email_otp()
+    store_email_otp(payload.email, otp)
+    try:
+        send_email_otp(payload.email, otp)
+    except smtplib.SMTPAuthenticationError:
+        EMAIL_OTP_STORE.pop(normalize_email(payload.email), None)
+        raise HTTPException(
+            status_code=400,
+            detail="SMTP authentication failed. Check SMTP_USERNAME and SMTP_PASSWORD, and use a Gmail app password without spaces.",
+        )
+    except smtplib.SMTPException as exc:
+        EMAIL_OTP_STORE.pop(normalize_email(payload.email), None)
+        raise HTTPException(status_code=400, detail=f"Unable to send OTP email: {exc}")
+
+    response = {
+        "message": "OTP sent to your email",
+        "expires_in_minutes": settings.email_otp_expire_minutes,
+    }
+    if not settings.smtp_host:
+        response["dev_otp"] = otp
+    return response
+
+
+@app.post("/auth/email-otp/verify", tags=["auth"])
+async def verify_email_otp(payload: EmailOtpVerify):
+    otp_entry = get_valid_otp_entry(payload.email)
+    if not otp_entry:
+        raise HTTPException(status_code=400, detail="OTP expired or not requested")
+
+    if str(otp_entry.get("otp")) != payload.otp.strip():
+        raise HTTPException(status_code=400, detail="Invalid OTP")
+
+    otp_entry["verified"] = True
+    return {"message": "Email verified successfully"}
+
 @app.post("/auth/register", response_model=TokenResponse, tags=["auth"])
 async def register(payload: UserCreate, db: AsyncSession = Depends(get_db)):
+    role = (payload.role or "user").strip().lower()
+    if role == "admin":
+        raise HTTPException(status_code=403, detail=ADMIN_CONTACT_MESSAGE)
+    if role not in SELF_SERVICE_ROLES:
+        raise HTTPException(status_code=400, detail="Invalid role selected")
+
+    otp_entry = get_valid_otp_entry(payload.email)
+    if not otp_entry or not otp_entry.get("verified"):
+        raise HTTPException(status_code=400, detail="Verify your email OTP before creating an account")
+
     # Check duplicate email/username
     existing = await db.execute(select(User).where(User.email == payload.email))
     if existing.scalar_one_or_none():
         raise HTTPException(400, "Email already registered")
 
+    existing = await db.execute(select(User).where(User.username == payload.username))
+    if existing.scalar_one_or_none():
+        raise HTTPException(400, "Username already taken")
+
     user = User(
         email=payload.email,
         username=payload.username,
         hashed_password=hash_password(payload.password),
+        role=role,
     )
     db.add(user)
     await db.commit()
     await db.refresh(user)
+    EMAIL_OTP_STORE.pop(normalize_email(payload.email), None)
 
     token = create_access_token({"sub": str(user.id)})
     return TokenResponse(access_token=token, user=UserOut.from_orm(user))

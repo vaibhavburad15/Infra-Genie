@@ -5,14 +5,7 @@ import {
   CheckCircle2, AlertTriangle, Loader,
 } from 'lucide-react';
 
-const projects = [
-  { name: 'payment-gateway', description: 'Core payment processing service with multi-gateway support', type: 'API Service', icon: Server, status: 'healthy', lastDeploy: '2h ago', version: 'v2.4.1', services: 4, environment: 'Production', language: 'Go' },
-  { name: 'user-auth-service', description: 'Authentication and authorization with OAuth2 and SAML', type: 'Microservice', icon: Shield, status: 'healthy', lastDeploy: '5h ago', version: 'v1.9.0', services: 3, environment: 'Production', language: 'Node.js' },
-  { name: 'analytics-dashboard', description: 'Real-time analytics platform with custom dashboards', type: 'Full-Stack', icon: Database, status: 'deploying', lastDeploy: '12m ago', version: 'v3.1.2', services: 6, environment: 'Staging', language: 'Python' },
-  { name: 'notification-engine', description: 'Multi-channel notification delivery (email, SMS, push)', type: 'Worker', icon: Boxes, status: 'degraded', lastDeploy: '1d ago', version: 'v0.8.5', services: 2, environment: 'Development', language: 'Rust' },
-  { name: 'data-pipeline-etl', description: 'Stream processing pipeline for real-time data ingestion', type: 'Pipeline', icon: Cloud, status: 'healthy', lastDeploy: '3h ago', version: 'v4.0.0', services: 8, environment: 'Production', language: 'Python' },
-  { name: 'mobile-bff', description: 'Backend-for-frontend optimized for mobile clients', type: 'API Service', icon: Server, status: 'healthy', lastDeploy: '6h ago', version: 'v1.2.0', services: 2, environment: 'Production', language: 'Go' },
-];
+const projects: { name: string; description: string; type: string; icon: any; status: string; lastDeploy: string; version: string; services: number; environment: string; language: string }[] = [];
 
 const statusConfig: Record<string, { dot: string; text: string; bg: string; label: string }> = {
   healthy: { dot: 'bg-emerald-500', text: 'text-emerald-600', bg: 'bg-emerald-50', label: 'Healthy' },

@@ -4,33 +4,13 @@ import {
   Zap, Shield, DollarSign, TrendingUp, Users, Container, Layers,
 } from 'lucide-react';
 
-const resourceStats = [
-  { label: 'Total Resources', value: '248', change: '+12%', trend: 'up', icon: Server, color: '#1e3a7a', bg: 'bg-[#edf3fb]' },
-  { label: 'Active Deployments', value: '18', change: '+3', trend: 'up', icon: Rocket, color: '#c9692a', bg: 'bg-[#fdf3eb]' },
-  { label: 'Health Score', value: '98.7%', change: '+0.4%', trend: 'up', icon: Activity, color: '#059669', bg: 'bg-emerald-50' },
-  { label: 'Monthly Cost', value: '$12.4K', change: '-8%', trend: 'down', icon: DollarSign, color: '#8b3d14', bg: 'bg-[#fdf3eb]' },
-];
+const resourceStats: { label: string; value: string; change: string; trend: string; icon: any; color: string; bg: string }[] = [];
 
-const cloudProviders = [
-  { name: 'AWS', resources: 142, color: '#FF9900', icon: Cloud, servers: 48, databases: 12, status: 'healthy' },
-  { name: 'Azure', resources: 76, color: '#0078D4', icon: Cloud, servers: 24, databases: 8, status: 'healthy' },
-  { name: 'GCP', resources: 30, color: '#4285F4', icon: Cloud, servers: 12, databases: 4, status: 'healthy' },
-];
+const cloudProviders: { name: string; resources: number; color: string; icon: any; servers: number; databases: number; status: string }[] = [];
 
-const resourceUsage = [
-  { name: 'Compute (EC2/VMs)', used: 64, total: '48 vCPUs', icon: Cpu, color: '#1e3a7a' },
-  { name: 'Memory', used: 72, total: '192 GB', icon: HardDrive, color: '#c9692a' },
-  { name: 'Storage', used: 41, total: '8.2 TB', icon: Database, color: '#059669' },
-  { name: 'Network I/O', used: 38, total: '1.2 Gbps', icon: Network, color: '#4a72c4' },
-];
+const resourceUsage: { name: string; used: number; total: string; icon: any; color: string }[] = [];
 
-const recentDeployments = [
-  { project: 'payment-service', version: 'v2.4.1', status: 'success', time: '2m ago', env: 'Production' },
-  { project: 'auth-gateway', version: 'v1.9.0', status: 'running', time: '8m ago', env: 'Staging' },
-  { project: 'analytics-api', version: 'v3.1.2', status: 'success', time: '15m ago', env: 'Production' },
-  { project: 'notification-svc', version: 'v0.8.5', status: 'failed', time: '32m ago', env: 'Development' },
-  { project: 'data-pipeline', version: 'v4.0.0', status: 'success', time: '1h ago', env: 'Production' },
-];
+const recentDeployments: { project: string; version: string; status: string; time: string; env: string }[] = [];
 
 const statusConfig: Record<string, { dot: string; text: string; bg: string; label: string }> = {
   success: { dot: 'bg-emerald-500', text: 'text-emerald-600', bg: 'bg-emerald-50', label: 'Success' },
@@ -44,11 +24,7 @@ const envColors: Record<string, string> = {
   Development: 'bg-gray-100 text-gray-500 border-gray-200',
 };
 
-const insights = [
-  { type: 'cost', icon: DollarSign, title: 'Save $340/mo on EC2', desc: 'Switch 4 instances to spot pricing', priority: 'High', color: '#c9692a' },
-  { type: 'security', icon: Shield, title: 'IAM role over-permissioned', desc: 'auth-service has 12 unused permissions', priority: 'Critical', color: '#ef4444' },
-  { type: 'perf', icon: Zap, title: '3 slow DB queries detected', desc: 'Add indexes to reduce 2s→200ms', priority: 'Medium', color: '#1e3a7a' },
-];
+const insights: { type: string; icon: any; title: string; desc: string; priority: string; color: string }[] = [];
 
 function RadialGauge({ value, label, icon: Icon, color }: { value: number; label: string; icon: typeof Server; color: string }) {
   const circumference = 2 * Math.PI * 28;
@@ -75,7 +51,7 @@ function RadialGauge({ value, label, icon: Icon, color }: { value: number; label
 }
 
 // Bar chart data
-const chartData = [45, 62, 38, 55, 48, 72, 58, 65, 50, 68, 75, 62, 80, 72, 68, 55, 60, 78];
+const chartData: number[] = [];
 
 export default function DashboardPage() {
   return (
