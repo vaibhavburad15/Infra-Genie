@@ -114,6 +114,7 @@ export interface Project {
   status: string;
   analysis_result?: ProjectAnalysis;
   deployment_plan?: DeploymentPlan;
+  logs?: LogEntry[];
   created_at: string;
   updated_at: string;
 }
@@ -211,6 +212,92 @@ export async function uploadProjectFile(projectId: string, file: File) {
 
 export async function analyzeProject(projectId: string) {
   return request<Project>(`/projects/${projectId}/analyze`, { method: 'POST' });
+}
+
+export interface LogEntry {
+  ts: string;
+  level: 'info' | 'success' | 'error' | 'system';
+  agent: string;
+  message: string;
+}
+
+/** Fetch all persisted log lines for a project (used on drawer open). */
+export async function getProjectLogs(projectId: string): Promise<LogEntry[]> {
+  const data = await request<{ logs: LogEntry[] }>(`/projects/${projectId}/logs`);
+  return data.logs || [];
+}
+
+/**
+ * Open an SSE connection to stream live analysis logs.
+ * Returns a cleanup function — call it to close the connection.
+ */
+export function streamProjectLogs(opts: {
+  projectId: string;
+  onLog: (entry: LogEntry) => void;
+  onDone: () => void;
+  onError?: (err: unknown) => void;
+}): () => void {
+  const { projectId, onLog, onDone, onError } = opts;
+  const token = localStorage.getItem('access_token');
+  const url = `${BASE_URL}/projects/${encodeURIComponent(projectId)}/logs/stream`;
+
+  // SSE doesn't support custom headers natively — pass token as query param
+  const fullUrl = `${url}?token=${encodeURIComponent(token || '')}`;
+
+  // Use fetch + ReadableStream so we can pass the auth header properly
+  const controller = new AbortController();
+
+  (async () => {
+    try {
+      const res = await fetch(fullUrl, {
+        headers: { Authorization: `Bearer ${token}` },
+        signal: controller.signal,
+      });
+      if (!res.ok || !res.body) {
+        onError?.(new Error(`SSE connect failed: ${res.status}`));
+        return;
+      }
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        // SSE events are separated by double newlines
+        const parts = buffer.split('\n\n');
+        buffer = parts.pop() ?? '';
+
+        for (const part of parts) {
+          for (const line of part.split('\n')) {
+            if (line.startsWith('data: ')) {
+              const payload = line.slice(6).trim();
+              if (!payload) continue;
+              try {
+                const parsed = JSON.parse(payload);
+                if (parsed.__done__) {
+                  onDone();
+                  return;
+                }
+                onLog(parsed as LogEntry);
+              } catch {
+                // ignore malformed lines / keep-alive comments
+              }
+            }
+          }
+        }
+      }
+      onDone();
+    } catch (err: unknown) {
+      if ((err as { name?: string }).name !== 'AbortError') {
+        onError?.(err);
+      }
+    }
+  })();
+
+  // Return cleanup
+  return () => controller.abort();
 }
 
 // ── Deployments ──────────────────────────────────────────────────────────

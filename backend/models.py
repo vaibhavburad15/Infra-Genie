@@ -38,6 +38,7 @@ async def init_db():
     async with async_engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
         await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS role VARCHAR(50) NOT NULL DEFAULT 'user'"))
+        await conn.execute(text("ALTER TABLE projects ADD COLUMN IF NOT EXISTS logs JSON"))
 
 
 # ── Enums ─────────────────────────────────────────────────────────────────────
@@ -87,6 +88,7 @@ class Project(Base):
     status = Column(SAEnum(ProjectStatus), default=ProjectStatus.pending)
     analysis_result = Column(JSON, nullable=True)   # AI analysis output
     deployment_plan = Column(JSON, nullable=True)   # Generated plan
+    logs = Column(JSON, nullable=True, default=list)  # Real-time agent log lines
     owner_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -180,6 +182,7 @@ class ProjectOut(BaseModel):
     status: ProjectStatus
     analysis_result: Optional[dict]
     deployment_plan: Optional[dict]
+    logs: Optional[list] = []
     created_at: datetime
     updated_at: datetime
 
