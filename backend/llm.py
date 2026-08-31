@@ -19,11 +19,14 @@ from config import settings
 
 
 def _headers() -> dict:
-    """Build request headers at call-time so the API key is always current."""
-    return {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {settings.llm_api_key}",
-    }
+    """Build request headers at call-time so the API key is always current.
+    The Authorization header is omitted entirely when llm_api_key is empty,
+    because sending 'Bearer ' (empty token) is rejected by most servers.
+    """
+    headers = {"Content-Type": "application/json"}
+    if settings.llm_api_key:
+        headers["Authorization"] = f"Bearer {settings.llm_api_key}"
+    return headers
 
 
 async def chat(
