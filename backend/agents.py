@@ -6,7 +6,8 @@ Graph flow:
       → [docker, terraform, kubernetes, cicd, architecture, monitoring, security, cost]
       → aggregate_results
 
-Each node calls Kimi K2 with a specialized system prompt.
+Each node calls the configured LLM (via llm.chat) with a specialized system prompt.
+The active model and endpoint are read from settings (LLM_MODEL / LLM_BASE_URL).
 """
 import json
 import asyncio

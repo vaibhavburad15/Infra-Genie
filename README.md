@@ -80,3 +80,6 @@ Open http://localhost:5173
 6. Approve deployment — infrastructure provisioning runs
 7. Monitor deployment status in real-time
 8. Ask the AI any questions about the project via streaming chat
+
+
+sudo journalctl -u qwen-vllm -n 20 --no-pager

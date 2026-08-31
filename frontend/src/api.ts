@@ -73,6 +73,38 @@ export interface EmailOtpVerifyResponse {
   message: string;
 }
 
+export interface ProjectAnalysis {
+  language?: string;
+  framework?: string;
+  has_database?: boolean;
+  has_frontend?: boolean;
+  complexity?: string;
+  recommended_strategy?: string;
+  notes?: string;
+  raw?: string;
+}
+
+export interface DiscoveredApp {
+  name: string;
+  type: string;
+  port?: number;
+  tech?: string;
+}
+
+export interface DeploymentPlan {
+  analysis?: ProjectAnalysis;
+  discovered_apps?: DiscoveredApp[];
+  strategy?: string;
+  docker?: string;
+  terraform?: string;
+  kubernetes?: string;
+  cicd?: string;
+  architecture?: string;
+  monitoring?: string;
+  security?: string;
+  cost_estimate?: string;
+}
+
 export interface Project {
   id: string;
   name: string;
@@ -80,7 +112,10 @@ export interface Project {
   source_type: string;
   github_url?: string;
   status: string;
+  analysis_result?: ProjectAnalysis;
+  deployment_plan?: DeploymentPlan;
   created_at: string;
+  updated_at: string;
 }
 
 // ── Auth ─────────────────────────────────────────────────────────────────

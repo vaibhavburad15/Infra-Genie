@@ -1,4 +1,16 @@
+"""
+InfraGenie — LLM Client
 
+Thin httpx wrapper around an OpenAI-compatible vLLM endpoint.
+All configuration (base URL, API key, model name) is read exclusively
+from the Settings singleton — never hard-coded here.
+
+Request URL pattern:
+    {LLM_BASE_URL}/chat/completions
+    e.g. http://<host>:8000/v1/chat/completions
+
+Do NOT append /v1 here; it is already part of LLM_BASE_URL in .env.
+"""
 import httpx
 import json
 from typing import AsyncIterator
@@ -6,26 +18,30 @@ from typing import AsyncIterator
 from config import settings
 
 
-HEADERS = {
-    "Content-Type": "application/json",
-    "Authorization": f"Bearer {settings.kimi_k2_api_key}",
-}
+def _headers() -> dict:
+    """Build request headers at call-time so the API key is always current."""
+    return {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {settings.llm_api_key}",
+    }
 
-MODEL = "kimi-k2"   # model name served by the vLLM instance
 
-
-async def chat(messages: list[dict], temperature: float = 0.3, max_tokens: int = 4096) -> str:
-    """Single completion call — returns full response string."""
+async def chat(
+    messages: list[dict],
+    temperature: float = 0.3,
+    max_tokens: int = 4096,
+) -> str:
+    """Single completion — returns the full response string."""
     payload = {
-        "model": MODEL,
+        "model": settings.llm_model,
         "messages": messages,
         "temperature": temperature,
         "max_tokens": max_tokens,
     }
     async with httpx.AsyncClient(timeout=120) as client:
         resp = await client.post(
-            f"{settings.kimi_k2_base_url}/v1/chat/completions",
-            headers=HEADERS,
+            f"{settings.llm_base_url}/chat/completions",
+            headers=_headers(),
             json=payload,
         )
         resp.raise_for_status()
@@ -33,10 +49,13 @@ async def chat(messages: list[dict], temperature: float = 0.3, max_tokens: int =
         return data["choices"][0]["message"]["content"]
 
 
-async def chat_stream(messages: list[dict], temperature: float = 0.3) -> AsyncIterator[str]:
-    """Streaming completion — yields token chunks."""
+async def chat_stream(
+    messages: list[dict],
+    temperature: float = 0.3,
+) -> AsyncIterator[str]:
+    """Streaming completion — yields token chunks as they arrive."""
     payload = {
-        "model": MODEL,
+        "model": settings.llm_model,
         "messages": messages,
         "temperature": temperature,
         "stream": True,
@@ -44,8 +63,8 @@ async def chat_stream(messages: list[dict], temperature: float = 0.3) -> AsyncIt
     async with httpx.AsyncClient(timeout=120) as client:
         async with client.stream(
             "POST",
-            f"{settings.kimi_k2_base_url}/v1/chat/completions",
-            headers=HEADERS,
+            f"{settings.llm_base_url}/chat/completions",
+            headers=_headers(),
             json=payload,
         ) as resp:
             resp.raise_for_status()
@@ -55,7 +74,9 @@ async def chat_stream(messages: list[dict], temperature: float = 0.3) -> AsyncIt
                     if chunk == "[DONE]":
                         break
                     try:
-                        delta = json.loads(chunk)["choices"][0]["delta"].get("content", "")
+                        delta = (
+                            json.loads(chunk)["choices"][0]["delta"].get("content", "")
+                        )
                         if delta:
                             yield delta
                     except Exception:
