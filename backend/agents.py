@@ -18,6 +18,7 @@ from typing import TypedDict, Annotated, List, Callable, Optional
 import operator
 
 from langgraph.graph import StateGraph, END
+from langgraph.graph.graph import CompiledGraph
 
 from llm import chat
 
@@ -250,7 +251,7 @@ async def run_all_agents(state: AgentState) -> dict:
 
 # ── Build LangGraph ───────────────────────────────────────────────────────────
 
-def build_graph() -> StateGraph:
+def build_graph() -> CompiledGraph:
     graph = StateGraph(AgentState)
 
     graph.add_node("analyze_project", analyze_project)

@@ -4,15 +4,20 @@ Tables: users, projects, deployments, reports
 """
 import uuid
 from datetime import datetime
-from typing import Optional, List
+from typing import Any, AsyncGenerator, List, Optional
 
 from sqlalchemy import (
-    Column, String, Text, DateTime, Boolean, ForeignKey,
-    JSON, Enum as SAEnum, create_engine, text
+    String, Text, DateTime, Boolean, ForeignKey,
+    JSON, Enum as SAEnum, text
 )
 from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.orm import declarative_base, relationship, sessionmaker
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+from sqlalchemy.ext.asyncio import (
+    AsyncEngine,
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from pydantic import BaseModel, EmailStr
 import enum
 
@@ -20,16 +25,21 @@ from config import settings
 
 # ── SQLAlchemy setup ──────────────────────────────────────────────────────────
 
-async_engine = create_async_engine(
+async_engine: AsyncEngine = create_async_engine(
     settings.database_url.replace("postgresql://", "postgresql+asyncpg://"),
     echo=False,
 )
-AsyncSessionLocal = sessionmaker(async_engine, class_=AsyncSession, expire_on_commit=False)
+AsyncSessionLocal: async_sessionmaker[AsyncSession] = async_sessionmaker(
+    bind=async_engine,
+    expire_on_commit=False,
+)
 
-Base = declarative_base()
+
+class Base(DeclarativeBase):
+    pass
 
 
-async def get_db():
+async def get_db() -> AsyncGenerator[AsyncSession, None]:
     async with AsyncSessionLocal() as session:
         yield session
 
@@ -65,69 +75,127 @@ class DeploymentStatus(str, enum.Enum):
 class User(Base):
     __tablename__ = "users"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    email = Column(String(255), unique=True, nullable=False, index=True)
-    username = Column(String(100), unique=True, nullable=False)
-    hashed_password = Column(String(255), nullable=False)
-    role = Column(String(50), nullable=False, default="user")
-    is_active = Column(Boolean, default=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    email: Mapped[str] = mapped_column(
+        String(255), unique=True, nullable=False, index=True
+    )
+    username: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
+    hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
+    role: Mapped[str] = mapped_column(String(50), nullable=False, default="user")
+    is_active: Mapped[Optional[bool]] = mapped_column(Boolean, default=True)
+    created_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime, default=datetime.utcnow
+    )
 
-    projects = relationship("Project", back_populates="owner", cascade="all, delete-orphan")
+    projects: Mapped[List["Project"]] = relationship(
+        back_populates="owner", cascade="all, delete-orphan"
+    )
 
 
 class Project(Base):
     __tablename__ = "projects"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    name = Column(String(255), nullable=False)
-    description = Column(Text, default="")
-    source_type = Column(String(50), default="upload")  # upload | github
-    github_url = Column(String(500), nullable=True)
-    file_path = Column(String(500), nullable=True)
-    status = Column(SAEnum(ProjectStatus), default=ProjectStatus.pending)
-    analysis_result = Column(JSON, nullable=True)   # AI analysis output
-    deployment_plan = Column(JSON, nullable=True)   # Generated plan
-    logs = Column(JSON, nullable=True, default=list)  # Real-time agent log lines
-    owner_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text, default="")
+    source_type: Mapped[Optional[str]] = mapped_column(
+        String(50), default="upload"
+    )  # upload | github
+    github_url: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    file_path: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    status: Mapped[Optional[ProjectStatus]] = mapped_column(
+        SAEnum(ProjectStatus), default=ProjectStatus.pending
+    )
+    analysis_result: Mapped[Optional[dict[str, Any]]] = mapped_column(
+        JSON, nullable=True
+    )  # AI analysis output
+    deployment_plan: Mapped[Optional[dict[str, Any]]] = mapped_column(
+        JSON, nullable=True
+    )  # Generated plan
+    logs: Mapped[Optional[List[dict[str, Any]]]] = mapped_column(
+        JSON, nullable=True, default=list
+    )  # Real-time agent log lines
+    owner_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=False
+    )
+    created_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime, default=datetime.utcnow
+    )
+    updated_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
 
-    owner = relationship("User", back_populates="projects")
-    deployments = relationship("Deployment", back_populates="project", cascade="all, delete-orphan")
-    reports = relationship("Report", back_populates="project", cascade="all, delete-orphan")
+    owner: Mapped["User"] = relationship(back_populates="projects")
+    deployments: Mapped[List["Deployment"]] = relationship(
+        back_populates="project", cascade="all, delete-orphan"
+    )
+    reports: Mapped[List["Report"]] = relationship(
+        back_populates="project", cascade="all, delete-orphan"
+    )
 
 
 class Deployment(Base):
     __tablename__ = "deployments"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id"), nullable=False)
-    status = Column(SAEnum(DeploymentStatus), default=DeploymentStatus.pending)
-    environment = Column(String(100), default="production")
-    artifacts = Column(JSON, nullable=True)          # Generated Dockerfile, terraform, k8s yamls, etc.
-    agent_logs = Column(JSON, nullable=True)         # Per-agent execution logs
-    approved_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
-    approved_at = Column(DateTime, nullable=True)
-    started_at = Column(DateTime, nullable=True)
-    completed_at = Column(DateTime, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("projects.id"), nullable=False
+    )
+    status: Mapped[Optional[DeploymentStatus]] = mapped_column(
+        SAEnum(DeploymentStatus), default=DeploymentStatus.pending
+    )
+    environment: Mapped[Optional[str]] = mapped_column(
+        String(100), default="production"
+    )
+    artifacts: Mapped[Optional[dict[str, Any]]] = mapped_column(
+        JSON, nullable=True
+    )  # Generated Dockerfile, terraform, k8s yamls, etc.
+    agent_logs: Mapped[Optional[dict[str, Any]]] = mapped_column(
+        JSON, nullable=True
+    )  # Per-agent execution logs
+    approved_by: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=True
+    )
+    approved_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    completed_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime, nullable=True
+    )
+    created_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime, default=datetime.utcnow
+    )
 
-    project = relationship("Project", back_populates="deployments")
+    project: Mapped["Project"] = relationship(back_populates="deployments")
 
 
 class Report(Base):
     __tablename__ = "reports"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id"), nullable=False)
-    deployment_id = Column(UUID(as_uuid=True), ForeignKey("deployments.id"), nullable=True)
-    report_type = Column(String(100))   # monitoring | security | cost | telemetry
-    content = Column(JSON, nullable=True)
-    insights = Column(Text, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("projects.id"), nullable=False
+    )
+    deployment_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("deployments.id"), nullable=True
+    )
+    report_type: Mapped[Optional[str]] = mapped_column(
+        String(100)
+    )  # monitoring | security | cost | telemetry
+    content: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON, nullable=True)
+    insights: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime, default=datetime.utcnow
+    )
 
-    project = relationship("Project", back_populates="reports")
+    project: Mapped["Project"] = relationship(back_populates="reports")
 
 
 # ── Pydantic Schemas ──────────────────────────────────────────────────────────

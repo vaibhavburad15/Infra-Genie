@@ -46,4 +46,6 @@ class Settings(BaseSettings):
         env_file = ("../.env", ".env")
 
 
-settings = Settings()
+# BaseSettings resolves required values from the environment and configured .env files.
+# Pylance's generated BaseModel constructor signature cannot represent that source.
+settings = Settings()  # pyright: ignore[reportCallIssue]
