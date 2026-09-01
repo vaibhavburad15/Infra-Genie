@@ -18,6 +18,14 @@ from typing import AsyncIterator
 from config import settings
 
 
+class LLMUnavailableError(Exception):
+    """Raised whenever the configured LLM endpoint can't be reached or fails
+    to return a usable response. Always carries a short, user-facing message
+    — callers can surface str(err) directly in logs/UI without translation.
+    """
+    pass
+
+
 def _headers() -> dict:
     """Build request headers at call-time so the API key is always current.
     The Authorization header is omitted entirely when llm_api_key is empty,
@@ -29,27 +37,92 @@ def _headers() -> dict:
     return headers
 
 
+def _friendly_llm_error(exc: Exception) -> LLMUnavailableError:
+    """Translate a low-level httpx/parsing error into a clear, user-facing message."""
+    base = settings.llm_base_url
+
+    if isinstance(exc, httpx.ConnectError):
+        return LLMUnavailableError(
+            f"Could not connect to the LLM service at {base}. "
+            f"Make sure the LLM server (vLLM) is running and reachable from this machine."
+        )
+    if isinstance(exc, httpx.TimeoutException):
+        return LLMUnavailableError(
+            f"The LLM service at {base} did not respond in time. "
+            f"It may be overloaded, still starting up, or unreachable."
+        )
+    if isinstance(exc, httpx.HTTPStatusError):
+        code = exc.response.status_code
+        if code in (401, 403):
+            return LLMUnavailableError(
+                f"The LLM service at {base} rejected the request (HTTP {code}). "
+                f"Check that LLM_API_KEY is set correctly."
+            )
+        if code == 404:
+            return LLMUnavailableError(
+                f"The LLM service at {base} returned HTTP 404. "
+                f"Check LLM_BASE_URL and LLM_MODEL are correct."
+            )
+        detail = exc.response.text[:200]
+        return LLMUnavailableError(
+            f"The LLM service at {base} returned an error (HTTP {code}): {detail}"
+        )
+    if isinstance(exc, (KeyError, IndexError, TypeError, json.JSONDecodeError)):
+        return LLMUnavailableError(
+            f"The LLM service at {base} returned an unexpected response format. "
+            f"Check that LLM_MODEL matches a model actually served at that endpoint."
+        )
+    if isinstance(exc, httpx.RequestError):
+        return LLMUnavailableError(
+            f"Could not reach the LLM service at {base}: {exc}"
+        )
+    return LLMUnavailableError(f"LLM request failed: {exc}")
+
+
 async def chat(
     messages: list[dict],
     temperature: float = 0.3,
     max_tokens: int = 4096,
+    timeout: float = 120,
 ) -> str:
-    """Single completion — returns the full response string."""
+    """Single completion — returns the full response string.
+
+    Raises LLMUnavailableError (never a raw httpx/parsing exception) so callers
+    can log or display str(err) directly as a clear reason for failure.
+    """
     payload = {
         "model": settings.llm_model,
         "messages": messages,
         "temperature": temperature,
         "max_tokens": max_tokens,
     }
-    async with httpx.AsyncClient(timeout=120) as client:
-        resp = await client.post(
-            f"{settings.llm_base_url}/chat/completions",
-            headers=_headers(),
-            json=payload,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        return data["choices"][0]["message"]["content"]
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            resp = await client.post(
+                f"{settings.llm_base_url}/chat/completions",
+                headers=_headers(),
+                json=payload,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            return data["choices"][0]["message"]["content"]
+    except LLMUnavailableError:
+        raise
+    except Exception as exc:
+        raise _friendly_llm_error(exc) from exc
+
+
+async def check_llm_health() -> None:
+    """Fast pre-flight check: confirms the LLM endpoint is reachable and
+    returns a usable completion, without waiting for the full 120s timeout
+    used by the real analysis calls. Raises LLMUnavailableError on failure.
+    """
+    await chat(
+        [{"role": "user", "content": "Reply with the single word: ok"}],
+        temperature=0,
+        max_tokens=5,
+        timeout=15,
+    )
 
 
 async def chat_stream(

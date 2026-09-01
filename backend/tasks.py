@@ -22,6 +22,7 @@ from sqlalchemy import create_engine
 
 from config import settings
 from agents import run_orchestrator_with_progress
+from llm import check_llm_health, LLMUnavailableError
 
 
 # Sync engine for RQ workers (RQ doesn't support async natively)
@@ -116,6 +117,23 @@ def task_analyze_project(project_id: str):
         _emit_log(r, db, project, "info", "InfraGenie", f"📂 Reading project source: {Path(source).name if project.file_path else source}")
         summary = summarize_project_files(source)
         _emit_log(r, db, project, "info", "InfraGenie", f"✅ Source indexed — {len(summary)} chars of context")
+
+        # Fast pre-flight LLM connectivity check. This runs before the full
+        # agent pipeline so a down/misconfigured LLM is reported in seconds
+        # rather than after minutes of sequential/parallel call timeouts.
+        _emit_log(r, db, project, "info", "InfraGenie", "🔌 Checking LLM connectivity…")
+        try:
+            asyncio.run(check_llm_health())
+        except LLMUnavailableError as e:
+            _emit_log(r, db, project, "error", "InfraGenie", f"❌ LLM is not working: {e}")
+            project.status = ProjectStatus.failed
+            db.commit()
+            try:
+                r.publish(f"project_logs:{project_id}", json.dumps({"__done__": True, "error": str(e)}))
+            except Exception:
+                pass
+            return
+        _emit_log(r, db, project, "success", "InfraGenie", "✅ LLM is reachable — starting agent pipeline")
 
         # Callback so agents can emit logs in real time
         def on_agent_log(agent: str, message: str, level: str = "info"):

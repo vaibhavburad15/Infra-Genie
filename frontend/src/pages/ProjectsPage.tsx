@@ -63,16 +63,31 @@ const LOG_COLORS: Record<string, string> = {
 function AnalysisTerminal({ project, onDone }: { project: Project; onDone: () => void }) {
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [streaming, setStreaming] = useState(true);
+  const [stalled, setStalled] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const cleanupRef = useRef<(() => void) | null>(null);
+  const stallTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // If no log line has arrived within STALL_MS of opening the stream, the
+  // backend worker probably isn't running or the LLM never responded to the
+  // very first call — let the user know instead of spinning forever.
+  const STALL_MS = 20000;
 
   useEffect(() => {
     let cancelled = false;
 
+    stallTimerRef.current = setTimeout(() => {
+      if (!cancelled) setStalled(true);
+    }, STALL_MS);
+
     // Seed with any already-persisted logs first
     getProjectLogs(project.id)
       .then((existing) => {
-        if (!cancelled) setLogs(existing);
+        if (!cancelled && existing.length > 0) {
+          setLogs(existing);
+          setStalled(false);
+          if (stallTimerRef.current) clearTimeout(stallTimerRef.current);
+        }
       })
       .catch(() => {});
 
@@ -80,7 +95,10 @@ function AnalysisTerminal({ project, onDone }: { project: Project; onDone: () =>
     const cleanup = streamProjectLogs({
       projectId: project.id,
       onLog: (entry) => {
-        if (!cancelled) setLogs((prev) => [...prev, entry]);
+        if (cancelled) return;
+        setStalled(false);
+        if (stallTimerRef.current) clearTimeout(stallTimerRef.current);
+        setLogs((prev) => [...prev, entry]);
       },
       onDone: () => {
         if (!cancelled) {
@@ -96,6 +114,7 @@ function AnalysisTerminal({ project, onDone }: { project: Project; onDone: () =>
 
     return () => {
       cancelled = true;
+      if (stallTimerRef.current) clearTimeout(stallTimerRef.current);
       cleanup();
     };
   }, [project.id]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -109,6 +128,11 @@ function AnalysisTerminal({ project, onDone }: { project: Project; onDone: () =>
     try { return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }); }
     catch { return ts; }
   };
+
+  // Last non-terminal log line — shown as a pinned "currently doing this" readout
+  // so the user always sees what the LLM is working on right now, without
+  // having to watch the scrolling terminal.
+  const current = logs.length > 0 ? logs[logs.length - 1] : null;
 
   return (
     <div className="flex flex-col h-full">
@@ -130,6 +154,26 @@ function AnalysisTerminal({ project, onDone }: { project: Project; onDone: () =>
           )}
         </div>
       </div>
+
+      {/* Currently-working-on readout — pinned above the scrolling log */}
+      {current && streaming && (
+        <div className="flex items-center gap-2 px-4 py-2 bg-[#12122a] border-b border-[#2a2a4a] text-xs font-mono">
+          <Loader size={11} className="animate-spin text-[#60a5fa] shrink-0" />
+          <span className="text-gray-500 shrink-0">Currently:</span>
+          <span className="text-[#c9692a] shrink-0 max-w-[140px] truncate">[{current.agent}]</span>
+          <span className="text-gray-200 truncate">{current.message}</span>
+        </div>
+      )}
+
+      {/* Stalled warning — no log lines arrived within STALL_MS */}
+      {stalled && logs.length === 0 && streaming && (
+        <div className="flex items-start gap-2 px-4 py-2 bg-[#2a1a12] border-b border-[#2a2a4a] text-xs">
+          <span className="text-[#f0a860] shrink-0">⚠️</span>
+          <span className="text-[#f0a860]">
+            This is taking longer than expected. Make sure the backend worker (<code className="font-mono">python worker.py</code>) is running and the LLM service is reachable.
+          </span>
+        </div>
+      )}
 
       {/* Log lines */}
       <div className="flex-1 overflow-y-auto bg-[#0d0d1a] rounded-b-xl p-4 font-mono text-xs space-y-1 min-h-0">
@@ -233,13 +277,33 @@ function ProjectDrawer({ project, onClose, onRefresh }: {
     }
 
     if (!plan && project.status === 'failed') {
+      const errorLogs = (project.logs || []).filter((l) => l.level === 'error');
+      const lastError = errorLogs[errorLogs.length - 1];
+      const isLlmIssue = !!lastError && /LLM/i.test(lastError.message);
       return (
-        <div className="flex flex-col items-center justify-center py-16 text-center">
+        <div className="flex flex-col items-center justify-center py-12 text-center px-4">
           <div className="w-14 h-14 rounded-2xl bg-red-50 flex items-center justify-center mb-4">
             <AlertTriangle size={24} className="text-red-500" />
           </div>
-          <p className="text-gray-800 text-sm font-semibold">Analysis failed</p>
-          <p className="text-gray-400 text-xs mt-1">Check that your backend worker is running and the LLM service is reachable.</p>
+          <p className="text-gray-800 text-sm font-semibold">
+            {isLlmIssue ? 'LLM is not working' : 'Analysis failed'}
+          </p>
+          <p className="text-gray-400 text-xs mt-1 max-w-sm">
+            {lastError?.message || 'Check that your backend worker is running and the LLM service is reachable.'}
+          </p>
+          {errorLogs.length > 0 && (
+            <div className="mt-4 w-full max-w-md text-left bg-[#0d0d1a] rounded-lg p-3 font-mono text-[11px] text-red-400 space-y-1 max-h-40 overflow-y-auto">
+              {errorLogs.slice(-5).map((l, i) => (
+                <div key={i} className="break-all">[{l.agent}] {l.message}</div>
+              ))}
+            </div>
+          )}
+          <button
+            onClick={async () => { const u = await analyzeProject(project.id); onRefresh(u); }}
+            className="mt-4 flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[#c9692a] text-white text-xs font-semibold hover:bg-[#b85820] cursor-pointer transition-colors"
+          >
+            <RefreshCw size={13} /> Retry Analysis
+          </button>
         </div>
       );
     }

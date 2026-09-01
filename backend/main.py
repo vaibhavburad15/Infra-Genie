@@ -470,6 +470,16 @@ async def stream_project_logs(
     Protocol:
       data: {"ts":"...","level":"info|success|error|system","agent":"...","message":"..."}
       data: {"__done__": true}   ← signals end of stream
+
+    NOTE: The `db` session injected via Depends(get_db) is closed by FastAPI as
+    soon as this route function *returns* — which happens immediately, since
+    StreamingResponse(generate(), ...) just wraps a not-yet-started generator.
+    The generator itself only runs afterwards, while the response is being
+    streamed to the client — by which point `db` is already closed and any
+    ORM object loaded from it (like `project`) is detached.
+
+    So: read everything we need from `project` up front, while `db` is still
+    alive, and never touch `db` (or `project`) again inside `generate()`.
     """
     # Verify project ownership
     result = await db.execute(
@@ -482,14 +492,20 @@ async def stream_project_logs(
     pid = str(project_id)
     channel = f"project_logs:{pid}"
 
+    # Snapshot everything generate() needs into plain values NOW, while `db`
+    # is still open. Do not pass `project` itself (an ORM instance bound to
+    # this soon-to-be-closed session) into the generator.
+    initial_logs = list(project.logs or [])
+    initial_status = project.status
+
     async def generate():
-        # First: flush all already-persisted logs (in case the client connected late)
-        await db.refresh(project)
-        for entry in (project.logs or []):
+        # First: flush all already-persisted logs (in case the client connected late).
+        # Uses the snapshot taken above — no DB access here, so no detached-instance risk.
+        for entry in initial_logs:
             yield f"data: {_json.dumps(entry)}\n\n"
 
         # If analysis already finished, close immediately
-        if project.status not in (ProjectStatus.analyzing, ProjectStatus.pending):
+        if initial_status not in (ProjectStatus.analyzing, ProjectStatus.pending):
             yield f"data: {_json.dumps({'__done__': True})}\n\n"
             return
 

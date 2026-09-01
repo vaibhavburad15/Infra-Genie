@@ -20,7 +20,7 @@ import operator
 from langgraph.graph import StateGraph, END
 from langgraph.graph.graph import CompiledGraph
 
-from llm import chat
+from llm import chat, LLMUnavailableError
 
 
 # ── Agent State ───────────────────────────────────────────────────────────────
@@ -228,23 +228,66 @@ async def aggregate_results(state: AgentState) -> dict:
 # ── Run specialized agents in parallel ───────────────────────────────────────
 
 async def run_all_agents(state: AgentState) -> dict:
-    """Fan-out: run all 8 specialized agents concurrently."""
+    """Fan-out: run all 8 specialist agents concurrently.
+
+    Each agent is isolated: if one fails (most commonly because the LLM is
+    unreachable), the others still run to completion instead of the whole
+    batch being cancelled. A failure emits a clear "LLM is not working" log
+    for that specific agent, in real time, and its output field is filled
+    with a short explanatory placeholder instead of silently going missing.
+    If every single agent fails, that is a strong signal the LLM itself is
+    down (not a one-off), so we raise to fail the whole pipeline clearly
+    rather than saving a "completed" plan with nothing usable in it.
+    """
     _emit(state, "InfraGenie", "⚡ Launching 8 specialist agents in parallel…")
-    results = await asyncio.gather(
-        docker_agent(state),
-        terraform_agent(state),
-        kubernetes_agent(state),
-        cicd_agent(state),
-        architecture_agent(state),
-        monitoring_agent(state),
-        security_agent(state),
-        cost_agent(state),
+
+    agent_fns = [
+        ("Docker Agent", "docker_artifacts", docker_agent),
+        ("Terraform Agent", "terraform_artifacts", terraform_agent),
+        ("Kubernetes Agent", "kubernetes_artifacts", kubernetes_agent),
+        ("CI/CD Agent", "cicd_artifacts", cicd_agent),
+        ("Architecture Agent", "architecture_notes", architecture_agent),
+        ("Monitoring Agent", "monitoring_config", monitoring_agent),
+        ("Security Agent", "security_config", security_agent),
+        ("Cost Agent", "cost_estimate", cost_agent),
+    ]
+
+    outcomes = await asyncio.gather(
+        *(fn(state) for _, _, fn in agent_fns),
+        return_exceptions=True,
     )
-    merged = {}
+
+    merged: dict = {}
     logs = []
-    for r in results:
-        logs.extend(r.pop("agent_logs", []))
-        merged.update(r)
+    failures = 0
+
+    for (agent_name, field, _fn), outcome in zip(agent_fns, outcomes):
+        if isinstance(outcome, LLMUnavailableError):
+            failures += 1
+            _emit(state, agent_name, f"❌ LLM is not working: {outcome}", "error")
+            merged[field] = f"[Unavailable — LLM is not working: {outcome}]"
+            logs.append({"agent": agent_name, "result": f"FAILED: {outcome}"})
+        elif isinstance(outcome, Exception):
+            failures += 1
+            _emit(state, agent_name, f"❌ Failed: {outcome}", "error")
+            merged[field] = f"[Unavailable — {outcome}]"
+            logs.append({"agent": agent_name, "result": f"FAILED: {outcome}"})
+        else:
+            logs.extend(outcome.pop("agent_logs", []))
+            merged.update(outcome)
+
+    if failures == len(agent_fns):
+        # Every specialist agent failed — the LLM is down, not a one-off glitch.
+        raise LLMUnavailableError(
+            "LLM is not working — all 8 specialist agents failed to get a response."
+        )
+    if failures:
+        _emit(
+            state, "InfraGenie",
+            f"⚠️ {failures}/{len(agent_fns)} agent(s) failed — continuing with partial results.",
+            "error",
+        )
+
     merged["agent_logs"] = logs
     return merged
 
