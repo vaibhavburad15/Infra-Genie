@@ -135,6 +135,8 @@ def task_analyze_project(project_id: str):
         # Re-fetch to get latest logs column
         db.expire(project)
         project = db.query(Project).filter(Project.id == project_id).first()
+        if project is None:
+            raise RuntimeError("Project was deleted while analysis was running")
 
         # Store results
         artifacts = result.get("final_artifacts", {})
