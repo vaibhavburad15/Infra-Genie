@@ -7,6 +7,8 @@ import smtplib
 import uuid
 import shutil
 import secrets
+import asyncio
+import json as _json
 from datetime import datetime, timedelta
 from email.message import EmailMessage
 from typing import List, Optional
@@ -33,7 +35,7 @@ from models import (
     DeploymentOut, ReportOut, ApproveDeployment,
     ProjectStatus, DeploymentStatus,
 )
-from tasks import get_queue, task_analyze_project, task_run_deployment
+from tasks import get_queue, get_redis_conn, task_analyze_project, task_run_deployment
 from llm import chat_stream
 
 # Install simple signal handlers so subprocesses exit cleanly on Ctrl+C
@@ -436,6 +438,106 @@ async def stream_insights(project_id: str, question: str, current_user: User = D
         yield "data: [DONE]\n\n"
 
     return StreamingResponse(generate(), media_type="text/event-stream")
+
+
+# ── Analysis log streaming ────────────────────────────────────────────────────
+
+@app.get("/projects/{project_id}/logs", tags=["projects"])
+async def get_project_logs(
+    project_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Return all persisted log lines for a project (for drawer initial load)."""
+    result = await db.execute(
+        select(Project).where(Project.id == project_id, Project.owner_id == current_user.id)
+    )
+    project = result.scalar_one_or_none()
+    if not project:
+        raise HTTPException(404, "Project not found")
+    return {"logs": project.logs or []}
+
+
+@app.get("/projects/{project_id}/logs/stream", tags=["projects"])
+async def stream_project_logs(
+    project_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    SSE stream of real-time agent log lines while a project is being analyzed.
+
+    Protocol:
+      data: {"ts":"...","level":"info|success|error|system","agent":"...","message":"..."}
+      data: {"__done__": true}   ← signals end of stream
+    """
+    # Verify project ownership
+    result = await db.execute(
+        select(Project).where(Project.id == project_id, Project.owner_id == current_user.id)
+    )
+    project = result.scalar_one_or_none()
+    if not project:
+        raise HTTPException(404, "Project not found")
+
+    pid = str(project_id)
+    channel = f"project_logs:{pid}"
+
+    async def generate():
+        # First: flush all already-persisted logs (in case the client connected late)
+        await db.refresh(project)
+        for entry in (project.logs or []):
+            yield f"data: {_json.dumps(entry)}\n\n"
+
+        # If analysis already finished, close immediately
+        if project.status not in (ProjectStatus.analyzing, ProjectStatus.pending):
+            yield f"data: {_json.dumps({'__done__': True})}\n\n"
+            return
+
+        # Subscribe to Redis pub/sub and relay events
+        r = get_redis_conn()
+        pubsub = r.pubsub()
+        pubsub.subscribe(channel)
+
+        try:
+            # Keep-alive: yield empty comments every 15 s so proxies don't cut the connection
+            TIMEOUT = 600   # max 10 minutes
+            elapsed = 0
+            TICK = 0.3      # poll interval in seconds
+
+            while elapsed < TIMEOUT:
+                msg = pubsub.get_message(ignore_subscribe_messages=True, timeout=0)
+                if msg and msg["type"] == "message":
+                    raw = msg["data"]
+                    if isinstance(raw, bytes):
+                        raw = raw.decode()
+                    yield f"data: {raw}\n\n"
+                    try:
+                        parsed = _json.loads(raw)
+                        if parsed.get("__done__"):
+                            return
+                    except Exception:
+                        pass
+                else:
+                    await asyncio.sleep(TICK)
+                    elapsed += TICK
+                    # Send SSE keep-alive comment every 15 s
+                    if int(elapsed) % 15 == 0 and elapsed % 1 < TICK:
+                        yield ": keep-alive\n\n"
+        finally:
+            try:
+                pubsub.unsubscribe(channel)
+                pubsub.close()
+            except Exception:
+                pass
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",   # disable nginx buffering
+        },
+    )
 
 
 # ── Health check ──────────────────────────────────────────────────────────────

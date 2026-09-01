@@ -1,13 +1,14 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   FolderGit2, Clock, Rocket, MoreVertical, Plus, Server, Search,
   CheckCircle2, AlertTriangle, Loader, X, RefreshCw, ChevronRight,
   Code, Box, Cloud, GitBranch, Shield, Activity, DollarSign,
-  Cpu, Database, Layers, FileCode, ExternalLink,
+  Cpu, Database, Layers, FileCode, ExternalLink, Terminal,
 } from 'lucide-react';
 import {
   listProjects, createProject, deleteProject, analyzeProject, getProject,
-  type Project, type DeploymentPlan,
+  streamProjectLogs, getProjectLogs,
+  type Project, type DeploymentPlan, type LogEntry,
 } from '@/api';
 
 // ── Status config ─────────────────────────────────────────────────────────────
@@ -48,6 +49,119 @@ const TABS: { key: keyof DeploymentPlan; label: string; icon: React.ElementType 
   { key: 'cost_estimate', label: 'Cost',          icon: DollarSign },
 ];
 
+// ── Log level styles ──────────────────────────────────────────────────────────
+
+const LOG_COLORS: Record<string, string> = {
+  system:  'text-[#60a5fa]',   // blue
+  info:    'text-gray-300',
+  success: 'text-emerald-400',
+  error:   'text-red-400',
+};
+
+// ── Live Terminal ─────────────────────────────────────────────────────────────
+
+function AnalysisTerminal({ project, onDone }: { project: Project; onDone: () => void }) {
+  const [logs, setLogs] = useState<LogEntry[]>([]);
+  const [streaming, setStreaming] = useState(true);
+  const bottomRef = useRef<HTMLDivElement>(null);
+  const cleanupRef = useRef<(() => void) | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    // Seed with any already-persisted logs first
+    getProjectLogs(project.id)
+      .then((existing) => {
+        if (!cancelled) setLogs(existing);
+      })
+      .catch(() => {});
+
+    // Open SSE stream
+    const cleanup = streamProjectLogs({
+      projectId: project.id,
+      onLog: (entry) => {
+        if (!cancelled) setLogs((prev) => [...prev, entry]);
+      },
+      onDone: () => {
+        if (!cancelled) {
+          setStreaming(false);
+          onDone();
+        }
+      },
+      onError: () => {
+        if (!cancelled) setStreaming(false);
+      },
+    });
+    cleanupRef.current = cleanup;
+
+    return () => {
+      cancelled = true;
+      cleanup();
+    };
+  }, [project.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Auto-scroll to bottom
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [logs]);
+
+  const formatTs = (ts: string) => {
+    try { return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }); }
+    catch { return ts; }
+  };
+
+  return (
+    <div className="flex flex-col h-full">
+      {/* Terminal header bar */}
+      <div className="flex items-center gap-2 px-4 py-2 bg-[#1a1a2e] rounded-t-xl border-b border-[#2a2a4a]">
+        <Terminal size={13} className="text-[#60a5fa]" />
+        <span className="text-[#60a5fa] text-xs font-mono font-semibold">Analysis Pipeline</span>
+        <div className="ml-auto flex items-center gap-2">
+          {streaming ? (
+            <>
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+              <span className="text-emerald-400 text-[10px] font-mono">LIVE</span>
+            </>
+          ) : (
+            <>
+              <span className="w-2 h-2 rounded-full bg-gray-500" />
+              <span className="text-gray-500 text-[10px] font-mono">DONE</span>
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* Log lines */}
+      <div className="flex-1 overflow-y-auto bg-[#0d0d1a] rounded-b-xl p-4 font-mono text-xs space-y-1 min-h-0">
+        {logs.length === 0 && (
+          <div className="flex items-center gap-2 text-gray-600">
+            <Loader size={11} className="animate-spin text-[#c9692a]" />
+            <span>Waiting for agents to start…</span>
+          </div>
+        )}
+        {logs.map((entry, i) => (
+          <div key={i} className="flex gap-2 leading-relaxed">
+            <span className="text-gray-600 shrink-0 select-none">{formatTs(entry.ts)}</span>
+            <span className={`shrink-0 w-14 truncate ${LOG_COLORS[entry.level] ?? 'text-gray-400'} select-none`}>
+              {entry.level.toUpperCase()}
+            </span>
+            <span className="text-[#c9692a] shrink-0 max-w-[140px] truncate">[{entry.agent}]</span>
+            <span className={`flex-1 break-all ${LOG_COLORS[entry.level] ?? 'text-gray-300'}`}>
+              {entry.message}
+            </span>
+          </div>
+        ))}
+        {streaming && logs.length > 0 && (
+          <div className="flex items-center gap-1 text-gray-600 mt-1">
+            <span className="animate-pulse">▋</span>
+          </div>
+        )}
+        <div ref={bottomRef} />
+      </div>
+    </div>
+  );
+}
+
 // ── Project Detail Drawer ─────────────────────────────────────────────────────
 
 function ProjectDrawer({ project, onClose, onRefresh }: {
@@ -56,49 +170,47 @@ function ProjectDrawer({ project, onClose, onRefresh }: {
   onRefresh: (p: Project) => void;
 }) {
   const [activeTab, setActiveTab] = useState<keyof DeploymentPlan>('analysis');
-  const [polling, setPolling] = useState(false);
+  const pollingRef = useRef(false);
   const plan = project.deployment_plan;
   const analysis = plan?.analysis || project.analysis_result;
 
-  // Poll while analyzing
+  // Poll for status change while analyzing — stops as soon as status changes.
+  // Keyed only on project.id so re-renders mid-poll don't restart the interval.
   useEffect(() => {
     if (project.status !== 'analyzing') return;
-    setPolling(true);
+    if (pollingRef.current) return;
+    pollingRef.current = true;
+
     const interval = setInterval(async () => {
       try {
         const fresh = await getProject(project.id);
+        // Only update the drawer project — do NOT call load() on the parent list
         onRefresh(fresh);
         if (fresh.status !== 'analyzing') {
           clearInterval(interval);
-          setPolling(false);
+          pollingRef.current = false;
         }
       } catch { /* ignore */ }
-    }, 3000);
-    return () => clearInterval(interval);
-  }, [project.id, project.status]);
+    }, 4000);
+
+    return () => {
+      clearInterval(interval);
+      pollingRef.current = false;
+    };
+  }, [project.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const renderTabContent = () => {
     if (!plan && project.status === 'analyzing') {
       return (
-        <div className="flex flex-col items-center justify-center py-16 text-center">
-          <Loader size={28} className="text-[#c9692a] animate-spin mb-4" />
-          <p className="text-gray-800 text-sm font-semibold">AI agents are analyzing your project…</p>
-          <p className="text-gray-400 text-xs mt-2 max-w-xs">
-            Running: Project Analyzer → App Discovery → Strategy Selection →
-            Docker, Terraform, K8s, CI/CD, Architecture, Monitoring, Security, Cost agents
-          </p>
-          <div className="mt-6 w-full max-w-xs space-y-2">
-            {['AI Project Analyzer','Application Discovery','Strategy Selection',
-              'Docker Agent','Terraform Agent','Kubernetes Agent',
-              'CI/CD Agent','Architecture Agent','Monitoring Agent','Security Agent','Cost Agent',
-            ].map((agent, i) => (
-              <div key={agent} className="flex items-center gap-2">
-                <Loader size={11} className="text-[#c9692a] animate-spin flex-shrink-0" style={{ animationDelay: `${i * 0.15}s` }} />
-                <span className="text-gray-500 text-xs">{agent}</span>
-              </div>
-            ))}
-          </div>
-        </div>
+        <AnalysisTerminal
+          project={project}
+          onDone={async () => {
+            try {
+              const fresh = await getProject(project.id);
+              onRefresh(fresh);
+            } catch { /* ignore */ }
+          }}
+        />
       );
     }
 
@@ -246,7 +358,7 @@ function ProjectDrawer({ project, onClose, onRefresh }: {
                   return (
                     <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium ${sc.bg} ${sc.text}`}>
                       <span className={`w-1.5 h-1.5 rounded-full ${sc.dot}`} />{sc.label}
-                      {project.status === 'analyzing' && polling && <Loader size={10} className="animate-spin ml-0.5" />}
+                      {project.status === 'analyzing' && <Loader size={10} className="animate-spin ml-0.5" />}
                     </span>
                   );
                 })()}
@@ -293,7 +405,7 @@ function ProjectDrawer({ project, onClose, onRefresh }: {
         )}
 
         {/* Content */}
-        <div className="flex-1 overflow-y-auto px-6 py-5">
+        <div className={`flex-1 min-h-0 ${project.status === 'analyzing' && !plan ? 'overflow-hidden px-4 py-4' : 'overflow-y-auto px-6 py-5'}`}>
           {renderTabContent()}
         </div>
 
@@ -407,6 +519,7 @@ export default function ProjectsPage() {
   };
 
   const handleRefresh = (updated: Project) => {
+    // Update the project in the list in-place — no API refetch of the full list
     setProjects((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
     setSelectedProject(updated);
   };
