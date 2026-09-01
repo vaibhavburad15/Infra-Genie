@@ -23,6 +23,11 @@ class Settings(BaseSettings):
     llm_base_url: str                          # e.g. http://<host>:8000/v1
     llm_api_key: str = ""                      # empty string = unauthenticated endpoint
     llm_model: str                             # e.g. Qwen/Qwen3-Coder-Next-FP8 (read from LLM_MODEL)
+    llm_timeout: float = 300.0                 # seconds to wait for ONE LLM response (LLM_TIMEOUT)
+    llm_max_concurrency: int = 4               # cap parallel agent → LLM calls (LLM_MAX_CONCURRENCY)
+
+    # ── Deployment ─────────────────────────────────────────────────────────────
+    deployment_mode: str = "simulate"          # simulate | artifacts (DEPLOYMENT_MODE)
 
     # ── Auth / JWT ────────────────────────────────────────────────────────────
     secret_key: str                            # JWT signing secret — must be set

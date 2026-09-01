@@ -309,8 +309,9 @@ async def upload_project(
     if not project:
         raise HTTPException(404, "Project not found")
 
-    # Save uploaded file
-    dest = UPLOAD_DIR / f"{project_id}_{file.filename}"
+    # Save uploaded file (sanitize the client-supplied filename)
+    safe_name = Path(file.filename or "upload.zip").name
+    dest = UPLOAD_DIR / f"{project_id}_{safe_name}"
     with open(dest, "wb") as f:
         shutil.copyfileobj(file.file, f)
 
@@ -319,9 +320,9 @@ async def upload_project(
     await db.commit()
     await db.refresh(project)
 
-    # Enqueue analysis
+    # Enqueue analysis (generous job timeout: cloning + slow vLLM + 8 agents)
     q = get_queue()
-    q.enqueue(task_analyze_project, str(project_id), job_timeout=600)
+    q.enqueue(task_analyze_project, str(project_id), job_timeout=1800)
 
     return project
 
@@ -339,7 +340,7 @@ async def analyze_project(
         raise HTTPException(404, "Project not found")
 
     q = get_queue()
-    q.enqueue(task_analyze_project, str(project_id), job_timeout=600)
+    q.enqueue(task_analyze_project, str(project_id), job_timeout=1800)
 
     project.status = ProjectStatus.analyzing
     await db.commit()
@@ -409,7 +410,7 @@ async def approve_deployment(
     await db.commit()
 
     q = get_queue()
-    q.enqueue(task_run_deployment, str(deployment_id), job_timeout=300)
+    q.enqueue(task_run_deployment, str(deployment_id), job_timeout=600)
 
     await db.refresh(deployment)
     return deployment
@@ -426,8 +427,25 @@ async def list_reports(project_id: uuid.UUID, db: AsyncSession = Depends(get_db)
 # ── Streaming AI chat ─────────────────────────────────────────────────────────
 
 @app.get("/stream/insights", tags=["ai"])
-async def stream_insights(project_id: str, question: str, current_user: User = Depends(get_current_user)):
-    """Stream AI insights about a project."""
+async def stream_insights(
+    project_id: str,
+    question: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Stream AI insights about a project (owner-only — was previously askable
+    for anyone with a JWT and any project id)."""
+    try:
+        pid = uuid.UUID(project_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid project id")
+
+    result = await db.execute(
+        select(Project).where(Project.id == pid, Project.owner_id == current_user.id)
+    )
+    if not result.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="Project not found")
+
     async def generate():
         messages = [
             {"role": "system", "content": "You are InfraGenie, an AI infrastructure expert. Answer questions about deployment and infrastructure."},

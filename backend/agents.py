@@ -47,6 +47,14 @@ class AgentState(TypedDict):
 
 # ── Helper ────────────────────────────────────────────────────────────────────
 
+# Appended to every agent request. The self-hosted vLLM is slow — asking for
+# tighter output keeps each call well inside the timeout budget.
+_CONCISE = (
+    "Be concise: no preamble, no filler, no markdown fences around JSON. "
+    "Return exactly what is asked (valid JSON, or the file contents directly)."
+)
+
+
 def _log(state: AgentState, agent: str, result: str) -> dict:
     return {"agent_logs": [{"agent": agent, "result": result[:500]}]}
 
@@ -61,10 +69,14 @@ def _emit(state: AgentState, agent: str, message: str, level: str = "info"):
             pass
 
 
-async def _ask(system: str, user: str) -> str:
+async def _ask(system: str, user: str, max_tokens: int = 2048) -> str:
     return await chat(
-        [{"role": "system", "content": system}, {"role": "user", "content": user}],
+        [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user + "\n\n" + _CONCISE},
+        ],
         temperature=0.2,
+        max_tokens=max_tokens,
     )
 
 
@@ -267,7 +279,11 @@ async def run_all_agents(state: AgentState) -> dict:
             _emit(state, agent_name, f"❌ LLM is not working: {outcome}", "error")
             merged[field] = f"[Unavailable — LLM is not working: {outcome}]"
             logs.append({"agent": agent_name, "result": f"FAILED: {outcome}"})
-        elif isinstance(outcome, Exception):
+        elif isinstance(outcome, BaseException):
+            # Covers every exception type (LLMUnavailableError handled above).
+            # Narrowing against BaseException (not Exception) cleans the
+            # `dict | BaseException` union that asyncio.gather(return_exceptions=True)
+            # produces, so the else-branch below is statically `dict`.
             failures += 1
             _emit(state, agent_name, f"❌ Failed: {outcome}", "error")
             merged[field] = f"[Unavailable — {outcome}]"
