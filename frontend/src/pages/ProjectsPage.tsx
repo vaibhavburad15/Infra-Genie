@@ -4,6 +4,7 @@ import {
   CheckCircle2, AlertTriangle, Loader, X, RefreshCw, ChevronRight,
   Code, Box, Cloud, GitBranch, Shield, Activity, DollarSign,
   Cpu, Database, Layers, FileCode, ExternalLink, Terminal,
+  Sparkles,
 } from 'lucide-react';
 import {
   listProjects, createProject, deleteProject, analyzeProject, getProject,
@@ -56,6 +57,7 @@ const LOG_COLORS: Record<string, string> = {
   info:    'text-gray-300',
   success: 'text-emerald-400',
   error:   'text-red-400',
+  llm:     'text-[#c9692a]',   // streamed LLM tokens - copper "thoughts"
 };
 
 // ── Live Terminal ─────────────────────────────────────────────────────────────
@@ -183,18 +185,34 @@ function AnalysisTerminal({ project, onDone }: { project: Project; onDone: () =>
             <span>Waiting for agents to start…</span>
           </div>
         )}
-        {logs.map((entry, i) => (
-          <div key={i} className="flex gap-2 leading-relaxed">
-            <span className="text-gray-600 shrink-0 select-none">{formatTs(entry.ts)}</span>
-            <span className={`shrink-0 w-14 truncate ${LOG_COLORS[entry.level] ?? 'text-gray-400'} select-none`}>
-              {entry.level.toUpperCase()}
-            </span>
-            <span className="text-[#c9692a] shrink-0 max-w-[140px] truncate">[{entry.agent}]</span>
-            <span className={`flex-1 break-all ${LOG_COLORS[entry.level] ?? 'text-gray-300'}`}>
-              {entry.message}
-            </span>
-          </div>
-        ))}
+        {logs.map((entry, i) => {
+          const kind = (entry.kind || entry.level) as string;
+          const isLlm = kind === 'llm' || entry.streaming === true;
+          if (isLlm) {
+            // Streamed LLM tokens: render inline without timestamp/level clutter so
+            // the user reads the model's reasoning as a flowing text block.
+            return (
+              <div key={i} className="flex gap-2 leading-snug">
+                <span className="text-[#c9692a]/70 shrink-0 select-none text-[10px]">▶</span>
+                <span className="text-[#c9692a]/90 flex-1 break-words text-[11px]">
+                  {entry.message}
+                </span>
+              </div>
+            );
+          }
+          return (
+            <div key={i} className="flex gap-2 leading-relaxed">
+              <span className="text-gray-600 shrink-0 select-none">{formatTs(entry.ts)}</span>
+              <span className={`shrink-0 w-14 truncate ${LOG_COLORS[kind] ?? 'text-gray-400'} select-none`}>
+                {kind.toUpperCase()}
+              </span>
+              <span className="text-[#c9692a] shrink-0 max-w-[140px] truncate">[{entry.agent}]</span>
+              <span className={`flex-1 break-all ${LOG_COLORS[kind] ?? 'text-gray-300'}`}>
+                {entry.message}
+              </span>
+            </div>
+          );
+        })}
         {streaming && logs.length > 0 && (
           <div className="flex items-center gap-1 text-gray-600 mt-1">
             <span className="animate-pulse">▋</span>
@@ -337,17 +355,117 @@ function ProjectDrawer({ project, onClose, onRefresh }: {
 
     // ── Tab: Analysis ──
     if (activeTab === 'analysis') {
+      const det = project.detailed_analysis;
+      const summary = det?.summary;
       return (
         <div className="space-y-4">
-          {analysis ? (
+          {det && summary ? (
+            <>
+              {/* Project overview card (deterministic — runs even when LLM is down) */}
+              <div className="bg-gradient-to-r from-[#1e3a7a] to-[#24478f] rounded-2xl p-4 text-white">
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-xs font-semibold uppercase tracking-wider opacity-70">Project Overview</p>
+                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-white/15 font-bold">
+                    {det.containerization.has_dockerfile ? '🐳 Docker' : 'no Docker'}
+                    {det.ci_cd.present && ' · ⚙️ CI'}
+                    {det.has_database_hint && ' · 💾 DB'}
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                  <div><p className="text-[10px] opacity-70 uppercase">Language</p><p className="text-sm font-bold truncate">{summary.primary_language || '—'}</p></div>
+                  <div><p className="text-[10px] opacity-70 uppercase">Framework</p><p className="text-sm font-bold truncate">{summary.primary_framework || '—'}</p></div>
+                  <div><p className="text-[10px] opacity-70 uppercase">Pkg manager</p><p className="text-sm font-bold truncate">{summary.package_manager || '—'}</p></div>
+                  <div><p className="text-[10px] opacity-70 uppercase">LOC</p><p className="text-sm font-bold">{(summary.total_loc ?? 0).toLocaleString()}</p></div>
+                </div>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-3 text-xs">
+                  <div><span className="opacity-70">Files</span> <b>{summary.total_files}</b></div>
+                  <div><span className="opacity-70">Source</span> <b>{summary.source_files}</b></div>
+                  <div><span className="opacity-70">Tests</span> <b>{summary.test_files}</b></div>
+                  <div><span className="opacity-70">Docs</span> <b>{summary.doc_files}</b></div>
+                </div>
+              </div>
+              {/* Languages breakdown */}
+              {det.languages.length > 0 && (
+                <div className="bg-white border border-gray-100 rounded-2xl p-4">
+                  <p className="text-gray-400 text-[10px] font-semibold uppercase tracking-wider mb-2">Languages</p>
+                  <div className="space-y-1.5">
+                    {det.languages.slice(0, 8).map((l) => (
+                      <div key={l.name} className="flex items-center gap-3 text-xs">
+                        <span className="text-gray-700 w-32 truncate font-medium">{l.name}</span>
+                        <div className="flex-1 h-2 rounded-full bg-gray-100 overflow-hidden">
+                          <div className="h-full bg-[#1e3a7a]" style={{ width: `${(l.loc / Math.max(summary.total_loc || 1, 1)) * 100}%` }} />
+                        </div>
+                        <span className="text-gray-500 w-24 text-right">{l.files} files · {l.loc.toLocaleString()} LOC</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {/* Tooling grid */}
+              {[
+                { title: 'Frameworks',  items: det.frameworks,  icon: Layers },
+                { title: 'Build tools', items: det.build_tools,  icon: Box },
+                { title: 'Testing',    items: det.tests,        icon: CheckCircle2 },
+                { title: 'Linters',    items: det.linters_formatters, icon: Code },
+                { title: 'Databases / ORMs', items: det.databases_orms, icon: Database },
+                { title: 'Cloud SDKs', items: det.cloud_sdks,   icon: Cloud },
+              ].filter((g) => g.items && g.items.length > 0).map((g) => {
+                const Ico = g.icon;
+                return (
+                  <div key={g.title} className="bg-gray-50 rounded-2xl p-3">
+                    <p className="text-gray-400 text-[10px] uppercase font-semibold tracking-wider mb-2 flex items-center gap-1.5">
+                      <Ico size={11} />{g.title}
+                    </p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {g.items.map((it, idx) => (
+                        <span key={idx} className="px-2.5 py-1 rounded-full bg-white text-[11px] font-medium text-gray-700 border border-gray-200">
+                          {it.name}{it.version && <span className="ml-1.5 text-gray-400 font-normal">v{it.version}</span>}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+              {det.entry_points.length > 0 && (
+                <div className="bg-gray-50 rounded-2xl p-3">
+                  <p className="text-gray-400 text-[10px] uppercase font-semibold tracking-wider mb-2">Entry points</p>
+                  <div className="space-y-1">
+                    {det.entry_points.slice(0, 8).map((ep, i) => (
+                      <p key={i} className="text-[11px] text-gray-700 font-mono">→ {ep}</p>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {det.environment_variables_hint.length > 0 && (
+                <div className="bg-gray-50 rounded-2xl p-3">
+                  <p className="text-gray-400 text-[10px] uppercase font-semibold tracking-wider mb-2">Environment variable hints</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {det.environment_variables_hint.slice(0, 16).map((k, i) => (
+                      <span key={i} className="px-2 py-0.5 rounded text-[10px] font-mono bg-white border border-gray-200 text-gray-700">{k}</span>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {/* LLM synthesis (rendered below the deterministic block; allowed to be empty / "fallback") */}
+              {analysis && (
+                <div className="bg-[#fdf3eb] border border-[#f0bc98] rounded-2xl p-3">
+                  <p className="text-[#c9692a] text-[10px] uppercase font-semibold tracking-wider mb-1.5 flex items-center gap-1.5">
+                    <Sparkles size={11} /> AI Commentary
+                    {analysis.fallback && <span className="text-[9px] px-1.5 py-0.5 rounded bg-[#c9692a]/15 font-bold">STATIC FALLBACK</span>}
+                  </p>
+                  <p className="text-gray-700 text-xs leading-relaxed">{analysis.notes || analysis.raw || 'No additional commentary.'}</p>
+                </div>
+              )}
+            </>
+          ) : analysis ? (
             <div className="grid grid-cols-2 gap-3">
               {[
-                { label: 'Language',   value: analysis.language },
-                { label: 'Framework',  value: analysis.framework },
+                { label: 'Language', value: analysis.language },
+                { label: 'Framework', value: analysis.framework },
                 { label: 'Complexity', value: analysis.complexity },
-                { label: 'Strategy',   value: analysis.recommended_strategy || plan?.strategy },
-                { label: 'Database',   value: analysis.has_database ? 'Yes' : 'No' },
-                { label: 'Frontend',   value: analysis.has_frontend ? 'Yes' : 'No' },
+                { label: 'Strategy', value: analysis.recommended_strategy || plan?.strategy },
+                { label: 'Database', value: analysis.has_database ? 'Yes' : 'No' },
+                { label: 'Frontend', value: analysis.has_frontend ? 'Yes' : 'No' },
               ].map(({ label, value }) => value && (
                 <div key={label} className="bg-gray-50 rounded-xl p-3">
                   <p className="text-gray-400 text-[10px] uppercase tracking-wider mb-1">{label}</p>
@@ -358,12 +476,6 @@ function ProjectDrawer({ project, onClose, onRefresh }: {
                 <div className="col-span-2 bg-[#edf3fb] rounded-xl p-3">
                   <p className="text-gray-400 text-[10px] uppercase tracking-wider mb-1">AI Notes</p>
                   <p className="text-gray-700 text-xs leading-relaxed">{analysis.notes}</p>
-                </div>
-              )}
-              {analysis.raw && (
-                <div className="col-span-2">
-                  <p className="text-gray-400 text-[10px] uppercase tracking-wider mb-1">Raw Output</p>
-                  <pre className="text-xs text-gray-600 bg-gray-50 rounded-xl p-3 overflow-x-auto whitespace-pre-wrap">{analysis.raw}</pre>
                 </div>
               )}
             </div>

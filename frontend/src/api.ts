@@ -1,376 +1,290 @@
-// src/api.ts
-// InfraGenie API client — talks to the FastAPI backend at VITE_API_URL
-
+// InfraGenie v3 API client (multi-tenant SaaS).
 const BASE_URL = (import.meta as any).env?.VITE_API_URL || 'http://localhost:8000';
 
 function getAuthHeaders(): Record<string, string> {
-  const token = localStorage.getItem('access_token');
-  return token ? { Authorization: `Bearer ${token}` } : {};
+  const t = localStorage.getItem('access_token');
+  return t ? { Authorization: `Bearer ${t}` } : {};
 }
-
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const headers = {
-    ...getAuthHeaders(),
-    ...(options.headers || {}),
-  };
-  const res = await fetch(`${BASE_URL}${path}`, { ...options, headers });
-  if (res.status === 401) {
-    localStorage.removeItem('access_token');
-  }
+  const res = await fetch(`${BASE_URL}${path}`, {
+    ...options,
+    headers: { ...getAuthHeaders(), ...(options.headers || {}) },
+  });
+  if (res.status === 401) localStorage.removeItem('access_token');
   if (!res.ok) {
-    const fallback = `API Error ${res.status}`;
-    const contentType = res.headers.get('content-type') || '';
-    let message = fallback;
-
-    if (contentType.includes('application/json')) {
-      const errorBody = await res.json().catch(() => null);
-      const detail = errorBody?.detail;
-
-      if (typeof detail === 'string') {
-        message = detail;
-      } else if (Array.isArray(detail)) {
-        message = detail
-          .map((item) => item?.msg)
-          .filter(Boolean)
-          .join(', ') || fallback;
-      } else if (typeof errorBody?.message === 'string') {
-        message = errorBody.message;
-      }
-    } else {
-      message = (await res.text().catch(() => '')) || fallback;
-    }
-
-    throw new Error(message);
+    const ct = res.headers.get('content-type') || '';
+    let msg = `API Error ${res.status}`;
+    if (ct.includes('application/json')) {
+      const b = await res.json().catch(() => null);
+      const d = b?.detail;
+      if (typeof d === 'string') msg = d;
+      else if (Array.isArray(d)) msg = d.map(x => x?.msg).filter(Boolean).join(', ') || msg;
+      else if (typeof b?.message === 'string') msg = b.message;
+    } else { msg = (await res.text().catch(() => '')) || msg; }
+    throw new Error(msg);
   }
   return res.json();
 }
 
-// ── Types ─────────────────────────────────────────────────────────────────
-
+// ── Types ────────────────────────────────────────────────────────────────────
 export type UserRole = 'user' | 'developer' | 'devops_engineer' | 'admin';
 
 export interface User {
-  id: string;
-  email: string;
-  username: string;
-  role: UserRole;
-  is_active: boolean;
+  id: string; email: string; username: string;
+  role: UserRole; is_active: boolean; current_org_id?: string | null; created_at: string;
 }
-
+export interface Organization {
+  id: string; name: string; slug: string; plan: string;
+  plan_seats?: number | null; plan_projects?: number | null;
+  plan_deployments_per_month?: number | null; created_at: string;
+}
+export interface Membership {
+  id: string; user_id: string; org_id: string; role: string; joined_at?: string | null;
+}
+export interface AuditLogEntry {
+  id: string; actor_id?: string | null; action: string;
+  target_type?: string | null; target_id?: string | null;
+  metadata_json?: Record<string, unknown> | null; created_at: string;
+}
+export interface Subscription {
+  plan: string; status: string; current_period_end?: string | null;
+  seats?: number | null; projects?: number | null;
+  deployments_per_month?: number | null;
+}
 export interface TokenResponse {
-  access_token: string;
-  token_type?: string;
-  user: User;
+  access_token: string; token_type?: string;
+  user: User; current_org?: Organization | null;
 }
-
-export interface EmailOtpRequestResponse {
-  message: string;
-  expires_in_minutes: number;
-  dev_otp?: string;
+// Detailed analysis shape returned by static_analysis.analyze_repo_static
+export interface LanguageStat { name: string; files: number; loc: number; }
+export interface NamedTool { name: string; version?: string | null; }
+export interface DetailedAnalysis {
+  summary: {
+    total_files: number; source_files: number; config_files: number;
+    doc_files: number; test_files: number; total_loc: number;
+    primary_language: string | null; primary_framework: string | null;
+    package_manager: string;
+  };
+  languages: LanguageStat[];
+  frameworks: NamedTool[]; build_tools: NamedTool[];
+  tests: NamedTool[]; linters_formatters: NamedTool[];
+  databases_orms: NamedTool[]; cloud_sdks: NamedTool[];
+  containerization: {
+    has_dockerfile: boolean; has_docker_compose: boolean;
+    docker_services: string[]; databases_detected_from_compose: string[];
+  };
+  ci_cd: { present: boolean; systems: string[]; };
+  entry_points: string[]; environment_variables_hint: string[];
+  has_database_hint: boolean; has_dockerfile: boolean;
 }
-
-export interface EmailOtpVerifyResponse {
-  message: string;
+export interface LogEntry {
+  ts: string; level: 'info' | 'success' | 'error' | 'llm' | 'system';
+  kind?: 'info' | 'success' | 'error' | 'llm' | 'system';
+  agent: string; message: string;
+  streaming?: boolean;
+  structured?: Record<string, unknown>;
 }
-
+export interface MetricsOverview {
+  projects: { total: number; deployed: number; failed: number; analyzing: number; };
+  deployments: { total: number; success: number; failed: number; running: number;
+                 avg_duration_seconds: number; };
+  languages: { name: string; count: number; }[];
+  frameworks: { name: string; count: number; }[];
+  databases: number; with_docker: number; reports_total: number;
+  tier: { plan: string; seats?: number | null; projects?: number | null;
+          deployments_per_month?: number | null; };
+}
 export interface ProjectAnalysis {
-  language?: string;
-  framework?: string;
-  has_database?: boolean;
-  has_frontend?: boolean;
-  complexity?: string;
-  recommended_strategy?: string;
-  notes?: string;
-  raw?: string;
+  language?: string; framework?: string;
+  has_database?: boolean; has_frontend?: boolean;
+  complexity?: string; recommended_strategy?: string;
+  notes?: string; raw?: string; fallback?: boolean;
 }
-
 export interface DiscoveredApp {
-  name: string;
-  type: string;
-  port?: number;
-  tech?: string;
+  name: string; type: string; port?: number; tech?: string;
 }
-
 export interface DeploymentPlan {
-  analysis?: ProjectAnalysis;
-  discovered_apps?: DiscoveredApp[];
-  strategy?: string;
-  docker?: string;
-  terraform?: string;
-  kubernetes?: string;
-  cicd?: string;
-  architecture?: string;
-  monitoring?: string;
-  security?: string;
-  cost_estimate?: string;
+  analysis?: ProjectAnalysis; discovered_apps?: DiscoveredApp[];
+  strategy?: string; docker?: string; terraform?: string;
+  kubernetes?: string; cicd?: string; architecture?: string;
+  monitoring?: string; security?: string; cost_estimate?: string;
+  detailed_analysis?: DetailedAnalysis;
 }
-
 export interface Project {
-  id: string;
-  name: string;
-  description: string;
-  source_type: string;
-  github_url?: string;
-  status: string;
-  analysis_result?: ProjectAnalysis;
+  id: string; name: string; description: string;
+  source_type: string; github_url?: string;
+  status: string; analysis_result?: ProjectAnalysis;
+  detailed_analysis?: DetailedAnalysis | null;
   deployment_plan?: DeploymentPlan;
-  logs?: LogEntry[];
-  created_at: string;
-  updated_at: string;
+  logs?: LogEntry[]; created_at: string; updated_at: string;
 }
 
-// ── Auth ─────────────────────────────────────────────────────────────────
-
-export async function register(payload: {
-  email: string;
-  username: string;
-  password: string;
-  role: UserRole;
-}): Promise<TokenResponse> {
+// ── Auth / Org / Audit / Subscription ────────────────────────────────────────
+export async function register(payload: { email: string; username: string;
+                                          password: string; role: UserRole;
+                                          org_name?: string; }): Promise<TokenResponse> {
   const data = await request<TokenResponse>('/auth/register', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });
   localStorage.setItem('access_token', data.access_token);
   return data;
 }
-
-export async function requestEmailOtp(payload: { email: string }): Promise<EmailOtpRequestResponse> {
-  return request<EmailOtpRequestResponse>('/auth/email-otp/request', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+export async function requestEmailOtp(payload: { email: string; }) {
+  return request('/auth/email-otp/request', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });
 }
-
-export async function verifyEmailOtp(payload: { email: string; otp: string }): Promise<EmailOtpVerifyResponse> {
-  return request<EmailOtpVerifyResponse>('/auth/email-otp/verify', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+export async function verifyEmailOtp(payload: { email: string; otp: string; }) {
+  return request('/auth/email-otp/verify', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });
 }
-
-export async function login(payload: { email: string; password: string }): Promise<TokenResponse> {
-  const form = new URLSearchParams();
-  form.append('username', payload.email);
-  form.append('password', payload.password);
-
+export async function login(payload: { email: string; password: string; }): Promise<TokenResponse> {
+  const fd = new URLSearchParams();
+  fd.append('username', payload.email);
+  fd.append('password', payload.password);
   const data = await request<TokenResponse>('/auth/login', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: form.toString(),
+    method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: fd.toString(),
   });
   localStorage.setItem('access_token', data.access_token);
   return data;
 }
+export function logout() { localStorage.removeItem('access_token'); }
+export async function getMe(): Promise<User> { return request<User>('/auth/me'); }
 
-export function logout() {
-  localStorage.removeItem('access_token');
-}
-
-export async function getMe(): Promise<User> {
-  return request<User>('/auth/me');
-}
-
-// ── Projects ─────────────────────────────────────────────────────────────
-
-export async function listProjects(): Promise<Project[]> {
-  return request<Project[]>('/projects');
-}
-
-export async function createProject(payload: {
-  name: string;
-  description?: string;
-  source_type: string;
-  github_url?: string;
-}): Promise<Project> {
-  return request<Project>('/projects', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+export async function listOrgs(): Promise<Organization[]> { return request<Organization[]>('/orgs'); }
+export async function createOrg(payload: { name: string; slug?: string; }): Promise<Organization> {
+  return request<Organization>('/orgs', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });
 }
+export async function switchOrg(orgId: string) {
+  return request(`/orgs/${encodeURIComponent(orgId)}/switch`, { method: 'POST' });
+}
+export async function getMySubscription(): Promise<Subscription> {
+  return request<Subscription>('/subscription/me');
+}
+export async function getAuditLog(limit = 100): Promise<AuditLogEntry[]> {
+  return request<AuditLogEntry[]>(`/audit-log?limit=${limit}`);
+}
+export async function getMetricsOverview(): Promise<MetricsOverview> {
+  return request<MetricsOverview>('/metrics/overview');
+}
 
+// ── Projects ────────────────────────────────────────────────────────────────
+export async function listProjects(): Promise<Project[]> { return request<Project[]>('/projects'); }
+export async function createProject(payload: { name: string; description?: string;
+                                               source_type: string; github_url?: string; }) {
+  return request<Project>('/projects', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+}
 export async function getProject(projectId: string): Promise<Project> {
   return request<Project>(`/projects/${projectId}`);
 }
-
 export async function deleteProject(projectId: string) {
   return request(`/projects/${projectId}`, { method: 'DELETE' });
 }
-
 export async function uploadProjectFile(projectId: string, file: File) {
-  const formData = new FormData();
-  formData.append('file', file);
-  return request<Project>(`/projects/${projectId}/upload`, {
-    method: 'POST',
-    body: formData,
-  });
+  const fd = new FormData();
+  fd.append('file', file);
+  return request<Project>(`/projects/${projectId}/upload`, { method: 'POST', body: fd });
 }
-
 export async function analyzeProject(projectId: string) {
   return request<Project>(`/projects/${projectId}/analyze`, { method: 'POST' });
 }
-
-export interface LogEntry {
-  ts: string;
-  level: 'info' | 'success' | 'error' | 'system';
-  agent: string;
-  message: string;
-}
-
-/** Fetch all persisted log lines for a project (used on drawer open). */
 export async function getProjectLogs(projectId: string): Promise<LogEntry[]> {
   const data = await request<{ logs: LogEntry[] }>(`/projects/${projectId}/logs`);
   return data.logs || [];
 }
-
-/**
- * Open an SSE connection to stream live analysis logs.
- * Returns a cleanup function — call it to close the connection.
- */
-export function streamProjectLogs(opts: {
-  projectId: string;
-  onLog: (entry: LogEntry) => void;
-  onDone: () => void;
-  onError?: (err: unknown) => void;
-}): () => void {
-  const { projectId, onLog, onDone, onError } = opts;
+export function streamProjectLogs(opts: { projectId: string;
+                                          onLog: (e: LogEntry) => void;
+                                          onDone: (info?: { deploymentId?: string;
+                                                            error?: string }) => void;
+                                          onError?: (e: unknown) => void; }): () => void {
   const token = localStorage.getItem('access_token');
-  const url = `${BASE_URL}/projects/${encodeURIComponent(projectId)}/logs/stream`;
-
-  // SSE doesn't support custom headers natively — pass token as query param
-  const fullUrl = `${url}?token=${encodeURIComponent(token || '')}`;
-
-  // Use fetch + ReadableStream so we can pass the auth header properly
+  const url = `${BASE_URL}/projects/${encodeURIComponent(opts.projectId)}/logs/stream`;
   const controller = new AbortController();
-
   (async () => {
     try {
-      const res = await fetch(fullUrl, {
+      const res = await fetch(url, {
         headers: { Authorization: `Bearer ${token}` },
         signal: controller.signal,
       });
-      if (!res.ok || !res.body) {
-        onError?.(new Error(`SSE connect failed: ${res.status}`));
-        return;
-      }
+      if (!res.ok || !res.body) { opts.onError?.(new Error(`SSE ${res.status}`)); return; }
       const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
-
+      const dec = new TextDecoder();
+      let buf = '';
       while (true) {
         const { value, done } = await reader.read();
         if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        // SSE events are separated by double newlines
-        const parts = buffer.split('\n\n');
-        buffer = parts.pop() ?? '';
-
-        for (const part of parts) {
-          for (const line of part.split('\n')) {
-            if (line.startsWith('data: ')) {
-              const payload = line.slice(6).trim();
-              if (!payload) continue;
-              try {
-                const parsed = JSON.parse(payload);
-                if (parsed.__done__) {
-                  onDone();
-                  return;
-                }
-                onLog(parsed as LogEntry);
-              } catch {
-                // ignore malformed lines / keep-alive comments
+        buf += dec.decode(value, { stream: true });
+        const parts = buf.split('\n\n'); buf = parts.pop() ?? '';
+        for (const p of parts) for (const ln of p.split('\n')) {
+          if (ln.startsWith('data: ')) {
+            const payload = ln.slice(6).trim();
+            if (!payload) continue;
+            try {
+              const parsed = JSON.parse(payload);
+              if (parsed.__done__) {
+                opts.onDone({ error: parsed.error, deploymentId: parsed.deployment_id });
+                return;
               }
-            }
+              opts.onLog(parsed as LogEntry);
+            } catch {}
           }
         }
       }
-      onDone();
-    } catch (err: unknown) {
-      if ((err as { name?: string }).name !== 'AbortError') {
-        onError?.(err);
-      }
+      opts.onDone();
+    } catch (e: unknown) {
+      if ((e as any)?.name !== 'AbortError') opts.onError?.(e);
     }
   })();
-
-  // Return cleanup
   return () => controller.abort();
 }
 
-// ── Deployments ──────────────────────────────────────────────────────────
-
+// ── Deployments / Reports ────────────────────────────────────────────────────
 export async function listDeployments(projectId: string) {
   return request(`/projects/${projectId}/deployments`);
 }
-
-export async function getDeployment(deploymentId: string) {
-  return request(`/deployments/${deploymentId}`);
-}
-
 export async function approveDeployment(deploymentId: string, approved: boolean) {
   return request(`/deployments/${deploymentId}/approve`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ approved }),
   });
 }
-
-// ── Reports ──────────────────────────────────────────────────────────────
-
 export async function listReports(projectId: string) {
   return request(`/projects/${projectId}/reports`);
 }
-
-// ── Streaming AI insights ────────────────────────────────────────────────
-
-export async function streamInsights(opts: {
-  projectId: string;
-  question: string;
-  onChunk?: (text: string) => void;
-  onDone?: () => void;
-  onError?: (err: unknown) => void;
-}) {
-  const { projectId, question, onChunk, onDone, onError } = opts;
+export async function streamInsights(opts: { projectId: string; question: string;
+                                            onChunk?: (t: string) => void;
+                                            onDone?: () => void;
+                                            onError?: (e: unknown) => void; }) {
   const token = localStorage.getItem('access_token');
-  const url = `${BASE_URL}/stream/insights?project_id=${encodeURIComponent(
-    projectId
-  )}&question=${encodeURIComponent(question)}`;
-
+  const url = `${BASE_URL}/stream/insights?project_id=${encodeURIComponent(opts.projectId)}&question=${encodeURIComponent(opts.question)}`;
   try {
-    const response = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
-    if (!response.ok || !response.body) throw new Error(`Stream request failed: ${response.status}`);
-
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
-
+    const r = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+    if (!r.ok || !r.body) throw new Error(`stream ${r.status}`);
+    const reader = r.body.getReader(); const dec = new TextDecoder(); let buf = '';
     while (true) {
       const { value, done } = await reader.read();
       if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n\n');
-      buffer = lines.pop() || '';
-
-      for (const line of lines) {
-        if (!line.startsWith('data: ')) continue;
-        const payload = line.slice(6);
-        if (payload === '[DONE]') {
-          onDone?.();
-          return;
-        }
-        onChunk?.(payload);
+      buf += dec.decode(value, { stream: true });
+      const parts = buf.split('\n\n'); buf = parts.pop() || '';
+      for (const ln of parts) {
+        if (!ln.startsWith('data: ')) continue;
+        const payload = ln.slice(6);
+        if (payload === '[DONE]') { opts.onDone?.(); return; }
+        opts.onChunk?.(payload);
       }
     }
-  } catch (err) {
-    onError?.(err);
-  }
+  } catch (e) { opts.onError?.(e); }
 }
 
-// ── Health check ─────────────────────────────────────────────────────────
-
-export async function checkHealth() {
-  return request('/health');
-}
+export async function checkHealth() { return request('/health'); }

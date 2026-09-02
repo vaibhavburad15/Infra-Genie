@@ -1,26 +1,30 @@
 """
-LangGraph Multi-Agent Orchestrator
+LangGraph Multi-Agent Orchestrator.
 
 Graph flow:
-  analyze_project → discover_apps → select_strategy
-      → [docker, terraform, kubernetes, cicd, architecture, monitoring, security, cost]
-      → aggregate_results
+  analyze_project -> discover_apps -> select_strategy
+    -> {Docker, Terraform, Kubernetes, CI/CD, Architecture,
+        Monitoring, Security, Cost} (parallel)
+  -> aggregate_results
 
-Each node calls the configured LLM (via llm.chat) with a specialized system prompt.
-The active model and endpoint are read from settings (LLM_MODEL / LLM_BASE_URL).
+The specialists do not invent detection anymore: the deterministic
+`ProjectDetails` summary produced by `static_analysis.analyze_repo_static`
+is passed in as `source_code_summary` (it's a dict, not a string). Each agent's
+system prompt instructs it to base all claims on `source_code_summary`. If a
+field is empty, it returns a short explicit note rather than guessing.
 
-The `run_orchestrator_with_progress` entry point accepts an `on_log` callback so the
-background worker can stream log lines to Redis in real time.
+Each specialist streams its LLM response through `on_llm_token` (when provided)
+so the live analysis terminal shows what the model is actually generating.
 """
-import json
 import asyncio
-from typing import TypedDict, Annotated, List, Callable, Optional
+import json
+from typing import TypedDict, Annotated, Callable, Optional
 import operator
 
 from langgraph.graph import StateGraph, END
 from langgraph.graph.graph import CompiledGraph
 
-from llm import chat, LLMUnavailableError
+from llm import chat_stream, LLMUnavailableError
 
 
 # ── Agent State ───────────────────────────────────────────────────────────────
@@ -28,10 +32,11 @@ from llm import chat, LLMUnavailableError
 class AgentState(TypedDict):
     project_id: str
     project_name: str
-    source_code_summary: str          # summary of files/structure sent by analyzer
-    analysis: dict                    # AI project analysis
-    discovered_apps: list             # microservices / apps found
-    strategy: str                     # deployment strategy chosen
+    # A deterministic dict from static_analysis.analyze_repo_static()
+    source_code_summary: dict
+    analysis: dict
+    discovered_apps: list
+    strategy: str
     docker_artifacts: str
     terraform_artifacts: str
     kubernetes_artifacts: str
@@ -42,16 +47,15 @@ class AgentState(TypedDict):
     cost_estimate: str
     agent_logs: Annotated[list, operator.add]
     final_artifacts: dict
-    on_log: Optional[Callable]        # progress callback: (agent, message, level) → None
+    on_log: Optional[Callable]
+    on_llm_token: Optional[Callable]
 
 
-# ── Helper ────────────────────────────────────────────────────────────────────
-
-# Appended to every agent request. The self-hosted vLLM is slow — asking for
-# tighter output keeps each call well inside the timeout budget.
 _CONCISE = (
-    "Be concise: no preamble, no filler, no markdown fences around JSON. "
-    "Return exactly what is asked (valid JSON, or the file contents directly)."
+    "Be concise. No preamble, no filler, no code fences around JSON. "
+    "Return exactly what is asked (a valid JSON object, or the file contents "
+    "directly). Use the deterministic ProjectDetails provided - never invent "
+    "frameworks or versions not listed there."
 )
 
 
@@ -59,8 +63,7 @@ def _log(state: AgentState, agent: str, result: str) -> dict:
     return {"agent_logs": [{"agent": agent, "result": result[:500]}]}
 
 
-def _emit(state: AgentState, agent: str, message: str, level: str = "info"):
-    """Fire the progress callback if present (runs in worker thread via asyncio.run)."""
+def _emit(state: AgentState, agent: str, message: str, level: str = "info") -> None:
     cb = state.get("on_log")
     if cb:
         try:
@@ -69,159 +72,267 @@ def _emit(state: AgentState, agent: str, message: str, level: str = "info"):
             pass
 
 
-async def _ask(system: str, user: str, max_tokens: int = 2048) -> str:
-    return await chat(
-        [
-            {"role": "system", "content": system},
-            {"role": "user", "content": user + "\n\n" + _CONCISE},
-        ],
-        temperature=0.2,
-        max_tokens=max_tokens,
-    )
+async def _streamed_ask(state: AgentState, agent_name: str, system: str, user: str,
+                       max_tokens: int = 1500) -> str:
+    """Ask the LLM and stream tokens back to the live terminal as they arrive.
+
+    Uses chat_stream() so the user can see model output in real time.
+    Returns the full assembled text."""
+    token_cb_state = {"buf": "", "last_flush_ts": 0.0}
+
+    def _on_token(tok: str) -> None:
+        token_cb_state["buf"] += tok
+        on_llm = state.get("on_llm_token")
+        if on_llm:
+            try:
+                on_llm(agent_name, tok)
+            except Exception:
+                pass
+
+    _emit(state, agent_name, "Asking LLM (streaming)…", "info")
+    text_parts: list[str] = []
+    async for chunk in chat_stream(
+        [{"role": "system", "content": system},
+         {"role": "user", "content": user + "\n\n" + _CONCISE}],
+        temperature=0.2, max_tokens=max_tokens, on_chunk=_on_token,
+    ):
+        text_parts.append(chunk)
+    full = "".join(text_parts).strip()
+    _emit(state, agent_name,
+          f"LLM returned {len(full)} chars", "success")
+    return full
 
 
 # ── Nodes ─────────────────────────────────────────────────────────────────────
 
+def _summary_block(state: AgentState) -> str:
+    """Render the deterministic analysis dict as a Markdown-ish block the LLM
+    can actually read. Keeps the model honest about what's known vs unknown."""
+    s = state.get("source_code_summary") or {}
+    summary = s.get("summary", {})
+    lines = [
+        f"PROJECT: {state['project_name']}",
+        f"PRIMARY LANGUAGE: {summary.get('primary_language','?')}",
+        f"PRIMARY FRAMEWORK: {summary.get('primary_framework','(none detected)')}",
+        f"PACKAGE MANAGER: {summary.get('package_manager','not detected')}",
+        f"FILES: {summary.get('total_files','?')}  "
+        f"SOURCE FILES: {summary.get('source_files','?')}  "
+        f"TEST FILES: {summary.get('test_files','?')}  "
+        f"LOC: {summary.get('total_loc','?')}",
+        "",
+        "LANGUAGES (top 6):",
+    ]
+    for lang in s.get("languages", [])[:6]:
+        lines.append(f"  - {lang.get('name')}: {lang.get('files')} files, "
+                     f"{lang.get('loc')} LOC")
+    lines.append("")
+    lines.append("FRAMEWORKS:")
+    for fw in s.get("frameworks", []):
+        ver = fw.get("version")
+        lines.append(f"  - {fw.get('name')}" + (f" v{ver}" if ver else ""))
+    if s.get("build_tools"):
+        lines += ["", "BUILD TOOLS:"]
+        for b in s["build_tools"]:
+            lines.append(f"  - {b.get('name')}" + (f" v{b.get('version')}" if b.get("version") else ""))
+    if s.get("tests"):
+        lines += ["", "TEST FRAMEWORKS:"]
+        for t in s["tests"]:
+            lines.append(f"  - {t.get('name')}" + (f" v{t.get('version')}" if t.get("version") else ""))
+    if s.get("databases_orms"):
+        lines += ["", "DATABASES / ORMs:"]
+        for d in s["databases_orms"]:
+            lines.append(f"  - {d.get('name')}" + (f" v{d.get('version')}" if d.get("version") else ""))
+    if s.get("linters_formatters"):
+        lines += ["", "LINTERS / FORMATTERS:"]
+        for lf in s["linters_formatters"]:
+            lines.append(f"  - {lf.get('name')}")
+    cont = s.get("containerization", {})
+    if cont.get("has_dockerfile") or cont.get("has_docker_compose"):
+        lines += ["", f"CONTAINER: Dockerfile={cont.get('has_dockerfile',False)}, "
+                      f"compose={cont.get('has_docker_compose',False)}"]
+        if cont.get("docker_services"):
+            lines.append(f"  compose services: {', '.join(cont['docker_services'])}")
+    if s.get("ci_cd", {}).get("present"):
+        lines += ["", f"CI/CD: {', '.join(s['ci_cd'].get('systems',[]))}"]
+    if s.get("entry_points"):
+        lines += ["", "ENTRY POINTS:"]
+        for ep in s["entry_points"][:5]:
+            lines.append(f"  - {ep}")
+    if s.get("environment_variables_hint"):
+        lines += ["", "ENV HINTS: " + ", ".join(s["environment_variables_hint"][:8])]
+    return "\n".join(lines)
+
+
 async def analyze_project(state: AgentState) -> dict:
-    _emit(state, "AI Project Analyzer", "🔍 Analyzing project structure, language and complexity…")
-    system = """You are an AI Project Analyzer. Analyze the given project summary and return a JSON object with:
-{
-  "language": "...",
-  "framework": "...",
-  "has_database": true/false,
-  "has_frontend": true/false,
-  "complexity": "low|medium|high",
-  "recommended_strategy": "docker-compose|kubernetes|serverless",
-  "notes": "..."
-}
-Return ONLY valid JSON."""
-    user = f"Project: {state['project_name']}\n\nCode Summary:\n{state['source_code_summary']}"
-    result = await _ask(system, user)
+    _emit(state, "AI Project Analyzer",
+          "Synthesizing project analysis from deterministic ProjectDetails…")
+    sys_prompt = (
+        "You are an AI Project Analyzer. Given the deterministic ProjectDetails "
+        "block below, return a JSON object with: "
+        "language, framework, has_database, has_frontend, complexity "
+        "(low|medium|high), recommended_strategy "
+        "(docker-compose|kubernetes|serverless), notes (1-2 sentences). "
+        "Use ONLY what's listed; do NOT invent."
+    )
+    user = _summary_block(state)
+    raw = await _streamed_ask(state, "AI Project Analyzer", sys_prompt, user, max_tokens=900)
     try:
-        analysis = json.loads(result)
+        analysis = json.loads(raw)
         _emit(state, "AI Project Analyzer",
-              f"✅ Detected: {analysis.get('language','?')} / {analysis.get('framework','?')} — strategy: {analysis.get('recommended_strategy','?')}",
+              f"Project is "
+              f"{analysis.get('language','?')} / {analysis.get('framework','?')} "
+              f"- complexity {analysis.get('complexity','?')}",
               "success")
     except Exception:
-        analysis = {"raw": result, "recommended_strategy": "docker-compose"}
-        _emit(state, "AI Project Analyzer", "⚠️ Could not parse JSON — using fallback analysis", "error")
-    return {"analysis": analysis, **_log(state, "AI Project Analyzer", str(analysis))}
+        analysis = {
+            "language": state["source_code_summary"].get("summary",{}).get("primary_language","Unknown"),
+            "framework": state["source_code_summary"].get("summary",{}).get("primary_framework"),
+            "complexity": "medium",
+            "recommended_strategy": "docker-compose",
+            "notes": "Static-analyzer fallback for the LLM JSON parser.",
+            "raw_llm_response": raw[:400],
+        }
+        _emit(state, "AI Project Analyzer",
+              "Model returned non-JSON; using deterministic fallback.", "error")
+    return {"analysis": analysis, **_log(state, "AI Project Analyzer", str(analysis)[:400])}
 
 
 async def discover_apps(state: AgentState) -> dict:
-    _emit(state, "Application Discovery", "🔎 Discovering services and microservices…")
-    system = """You are an Application Discovery agent. Given a project analysis, list all distinct applications/services as a JSON array.
-Each item: {"name": "...", "type": "backend|frontend|worker|database", "port": 8000, "tech": "..."}
-Return ONLY valid JSON array."""
-    user = f"Analysis: {json.dumps(state['analysis'])}\n\nSummary: {state['source_code_summary'][:2000]}"
-    result = await _ask(system, user)
+    _emit(state, "Application Discovery", "Discovering services and runtimes…")
+    sys_prompt = (
+        "You are an Application Discovery agent. Given the ProjectDetails, list "
+        "the distinct runnable services as a JSON array. Each item: "
+        "{name, type (backend|frontend|worker|database|static), port, tech}. "
+        "If only one app exists, return one item. Be honest - don't fabricate ports."
+    )
+    user = _summary_block(state)
+    raw = await _streamed_ask(state, "Application Discovery", sys_prompt, user, max_tokens=900)
     try:
-        apps = json.loads(result)
-        names = ", ".join(a.get("name", "?") for a in apps)
-        _emit(state, "Application Discovery", f"✅ Found {len(apps)} service(s): {names}", "success")
+        apps = json.loads(raw)
+        if not isinstance(apps, list):
+            raise ValueError("expected array")
+        _emit(state, "Application Discovery",
+              f"Found {len(apps)} service(s): " +
+              ", ".join(a.get("name","?") for a in apps), "success")
     except Exception:
-        apps = [{"name": state["project_name"], "type": "backend", "port": 8000, "tech": "unknown"}]
-        _emit(state, "Application Discovery", "⚠️ Using fallback single-service discovery", "error")
-    return {"discovered_apps": apps, **_log(state, "Application Discovery", str(apps))}
+        primary = state["source_code_summary"].get("summary",{}).get("primary_language","app")
+        apps = [{"name": primary, "type": "backend", "port": 8000,
+                 "tech": state["source_code_summary"].get("summary",{}).get("primary_framework","unknown")}]
+        _emit(state, "Application Discovery",
+              "Using deterministic single-service fallback.", "error")
+    return {"discovered_apps": apps, **_log(state, "Application Discovery", str(apps)[:400])}
 
 
 async def select_strategy(state: AgentState) -> dict:
-    strategy = state["analysis"].get("recommended_strategy", "docker-compose")
-    _emit(state, "Strategy Selection", f"✅ Deployment strategy selected: {strategy}", "success")
+    strategy = state["analysis"].get("recommended_strategy") or "docker-compose"
+    _emit(state, "Strategy Selection",
+          f"Deployment strategy: {strategy} (from ProjectDetails + LLM)",
+          "success")
     return {"strategy": strategy, **_log(state, "Strategy Selection", strategy)}
 
 
-# ── Specialized AI Agents ─────────────────────────────────────────────────────
+# ── Specialized agents ───────────────────────────────────────────────────────
 
 async def docker_agent(state: AgentState) -> dict:
-    _emit(state, "Docker Agent", "🐳 Generating Dockerfiles and docker-compose.yml…")
-    system = """You are a Docker AI Agent. Generate production-ready Dockerfiles and docker-compose.yml for the given applications.
-Include multi-stage builds, non-root users, health checks. Return the complete file contents."""
-    user = f"Apps: {json.dumps(state['discovered_apps'])}\nStrategy: {state['strategy']}\nAnalysis: {json.dumps(state['analysis'])}"
-    result = await _ask(system, user)
-    _emit(state, "Docker Agent", "✅ Docker configuration generated", "success")
-    return {"docker_artifacts": result, **_log(state, "Docker AI Agent", result)}
+    _emit(state, "Docker Agent", "Generating Dockerfile and docker-compose.yml…")
+    sys_prompt = (
+        "You are a Docker AI Agent. Produce a Dockerfile and a docker-compose.yml "
+        "tailored to the project's detected language / framework. Use multi-stage "
+        "builds, non-root user, health checks. If the ProjectDetails shows an "
+        "existing Dockerfile at /Dockerfile, reference its base image. Return the "
+        "two files in this exact format:\n\n"
+        "=== Dockerfile ===\n<contents>\n\n=== docker-compose.yml ===\n<contents>\n"
+    )
+    user = _summary_block(state) + "\nSTRATEGY=" + state["strategy"]
+    result = await _streamed_ask(state, "Docker Agent", sys_prompt, user, max_tokens=1800)
+    return {"docker_artifacts": result, **_log(state, "Docker Agent", result[:400])}
 
 
 async def terraform_agent(state: AgentState) -> dict:
-    _emit(state, "Terraform Agent", "🏗️  Generating Terraform IaC…")
-    system = """You are a Terraform AI Agent. Generate Terraform IaC for the infrastructure needed.
-Include provider config, VPC, compute, storage resources. Use variables for environment-specific values."""
-    user = f"Apps: {json.dumps(state['discovered_apps'])}\nStrategy: {state['strategy']}"
-    result = await _ask(system, user)
-    _emit(state, "Terraform Agent", "✅ Terraform configuration generated", "success")
-    return {"terraform_artifacts": result, **_log(state, "Terraform AI Agent", result)}
+    _emit(state, "Terraform Agent", "Generating Terraform IaC…")
+    sys_prompt = (
+        "You are a Terraform AI Agent. Generate HCL for the project - provider, "
+        "compute, networking, variables. Return the .tf file contents directly. "
+        "Use AWS as the default provider."
+    )
+    user = _summary_block(state)
+    result = await _streamed_ask(state, "Terraform Agent", sys_prompt, user, max_tokens=1800)
+    return {"terraform_artifacts": result, **_log(state, "Terraform Agent", result[:400])}
 
 
 async def kubernetes_agent(state: AgentState) -> dict:
-    _emit(state, "Kubernetes Agent", "☸️  Generating Kubernetes manifests…")
-    system = """You are a Kubernetes AI Agent. Generate K8s manifests: Deployments, Services, Ingress, HPA, ConfigMaps.
-Follow best practices: resource limits, liveness/readiness probes, rolling updates."""
-    user = f"Apps: {json.dumps(state['discovered_apps'])}\nAnalysis: {json.dumps(state['analysis'])}"
-    result = await _ask(system, user)
-    _emit(state, "Kubernetes Agent", "✅ Kubernetes manifests generated", "success")
-    return {"kubernetes_artifacts": result, **_log(state, "Kubernetes AI Agent", result)}
+    _emit(state, "Kubernetes Agent", "Generating Kubernetes manifests…")
+    sys_prompt = (
+        "You are a Kubernetes AI Agent. Generate Deployment + Service + Ingress for "
+        "the primary service. Include liveness / readiness probes, resource limits, "
+        "rolling update strategy. Return YAML only."
+    )
+    user = _summary_block(state)
+    result = await _streamed_ask(state, "Kubernetes Agent", sys_prompt, user, max_tokens=1800)
+    return {"kubernetes_artifacts": result, **_log(state, "Kubernetes Agent", result[:400])}
 
 
 async def cicd_agent(state: AgentState) -> dict:
-    _emit(state, "CI/CD Agent", "🔄 Generating CI/CD pipeline…")
-    system = """You are a CI/CD AI Agent. Generate a GitHub Actions workflow (or GitLab CI) pipeline.
-Include: build, test, security scan, push to registry, deploy stages."""
-    user = f"Apps: {json.dumps(state['discovered_apps'])}\nAnalysis: {json.dumps(state['analysis'])}"
-    result = await _ask(system, user)
-    _emit(state, "CI/CD Agent", "✅ CI/CD pipeline generated", "success")
-    return {"cicd_artifacts": result, **_log(state, "CI/CD AI Agent", result)}
+    _emit(state, "CI/CD Agent", "Generating GitHub Actions workflow…")
+    sys_prompt = (
+        "You are a CI/CD AI Agent. Produce a GitHub Actions workflow YAML with "
+        "build -> test -> docker push -> deploy steps, tuned to the project's "
+        "package manager and test framework from ProjectDetails. Return YAML only."
+    )
+    user = _summary_block(state)
+    result = await _streamed_ask(state, "CI/CD Agent", sys_prompt, user, max_tokens=1500)
+    return {"cicd_artifacts": result, **_log(state, "CI/CD Agent", result[:400])}
 
 
 async def architecture_agent(state: AgentState) -> dict:
-    _emit(state, "Architecture Agent", "🏛️  Generating architecture recommendations…")
-    system = """You are an Architecture AI Agent. Review the application structure and provide architecture recommendations:
-scalability, resilience patterns, API gateway needs, service mesh suggestions."""
-    user = f"Apps: {json.dumps(state['discovered_apps'])}\nAnalysis: {json.dumps(state['analysis'])}"
-    result = await _ask(system, user)
-    _emit(state, "Architecture Agent", "✅ Architecture plan generated", "success")
-    return {"architecture_notes": result, **_log(state, "Architecture AI Agent", result)}
+    _emit(state, "Architecture Agent", "Drafting architecture recommendations…")
+    sys_prompt = (
+        "You are an Architecture AI Agent. Write 6-10 bullets with concrete "
+        "scalability / resilience recommendations for the project. Use the "
+        "ProjectDetails; flag any concerns (e.g. no DB detected, single tenant)."
+    )
+    user = _summary_block(state)
+    result = await _streamed_ask(state, "Architecture Agent", sys_prompt, user, max_tokens=900)
+    return {"architecture_notes": result, **_log(state, "Architecture Agent", result[:400])}
 
 
 async def monitoring_agent(state: AgentState) -> dict:
-    _emit(state, "Monitoring Agent", "📊 Generating monitoring configuration…")
-    system = """You are a Monitoring AI Agent. Generate monitoring configuration:
-Prometheus scrape configs, Grafana dashboard JSON, alerting rules, log aggregation setup."""
-    user = f"Apps: {json.dumps(state['discovered_apps'])}\nStrategy: {state['strategy']}"
-    result = await _ask(system, user)
-    _emit(state, "Monitoring Agent", "✅ Monitoring configuration generated", "success")
-    return {"monitoring_config": result, **_log(state, "Monitoring AI Agent", result)}
+    _emit(state, "Monitoring Agent", "Generating Prometheus / Grafana config…")
+    sys_prompt = (
+        "You are a Monitoring AI Agent. Return a Prometheus scrape config "
+        "(YAML) tuned for the project's primary framework, plus 3 alerting rules."
+    )
+    user = _summary_block(state)
+    result = await _streamed_ask(state, "Monitoring Agent", sys_prompt, user, max_tokens=1200)
+    return {"monitoring_config": result, **_log(state, "Monitoring Agent", result[:400])}
 
 
 async def security_agent(state: AgentState) -> dict:
-    _emit(state, "Security Agent", "🔒 Running security analysis and generating hardening config…")
-    system = """You are a Security AI Agent. Analyze the deployment plan and provide:
-- Security hardening recommendations
-- Network policies
-- Secrets management approach
-- RBAC configuration
-- Vulnerability scan checklist"""
-    user = f"Apps: {json.dumps(state['discovered_apps'])}\nAnalysis: {json.dumps(state['analysis'])}"
-    result = await _ask(system, user)
-    _emit(state, "Security Agent", "✅ Security configuration generated", "success")
-    return {"security_config": result, **_log(state, "Security AI Agent", result)}
+    _emit(state, "Security Agent", "Compiling security hardening checklist…")
+    sys_prompt = (
+        "You are a Security AI Agent. Produce a Markdown checklist with: "
+        "image hardening, network policies, secrets management, RBAC, and any "
+        "vulnerabilities typical of the detected framework version."
+    )
+    user = _summary_block(state)
+    result = await _streamed_ask(state, "Security Agent", sys_prompt, user, max_tokens=1000)
+    return {"security_config": result, **_log(state, "Security Agent", result[:400])}
 
 
 async def cost_agent(state: AgentState) -> dict:
-    _emit(state, "Cost Agent", "💰 Estimating infrastructure costs…")
-    system = """You are a Cost Optimization AI Agent. Estimate infrastructure costs and suggest optimizations:
-- Monthly cost estimate by service
-- Spot/preemptible instance recommendations
-- Right-sizing suggestions
-- Reserved instance savings"""
-    user = f"Apps: {json.dumps(state['discovered_apps'])}\nStrategy: {state['strategy']}"
-    result = await _ask(system, user)
-    _emit(state, "Cost Agent", "✅ Cost estimate generated", "success")
-    return {"cost_estimate": result, **_log(state, "Cost Optimization AI Agent", result)}
+    _emit(state, "Cost Agent", "Estimating monthly cost and optimization levers…")
+    sys_prompt = (
+        "You are a Cost Optimization AI Agent. Return a table-form cost estimate "
+        "(monthly $) covering compute / storage / network for the project, and "
+        "3 - 5 savings recommendations (right-sizing, reserved capacity, caching)."
+    )
+    user = _summary_block(state) + "\nSTRATEGY=" + state["strategy"]
+    result = await _streamed_ask(state, "Cost Agent", sys_prompt, user, max_tokens=900)
+    return {"cost_estimate": result, **_log(state, "Cost Agent", result[:400])}
 
 
 async def aggregate_results(state: AgentState) -> dict:
-    artifacts = {
+    return {"final_artifacts": {
         "docker": state.get("docker_artifacts", ""),
         "terraform": state.get("terraform_artifacts", ""),
         "kubernetes": state.get("kubernetes_artifacts", ""),
@@ -232,26 +343,16 @@ async def aggregate_results(state: AgentState) -> dict:
         "cost_estimate": state.get("cost_estimate", ""),
         "strategy": state.get("strategy", ""),
         "analysis": state.get("analysis", {}),
+        "detailed_analysis": state.get("source_code_summary", {}),
         "discovered_apps": state.get("discovered_apps", []),
-    }
-    return {"final_artifacts": artifacts}
+    }}
 
 
-# ── Run specialized agents in parallel ───────────────────────────────────────
+# ── Fan-out / parallel runner ─────────────────────────────────────────────────
 
 async def run_all_agents(state: AgentState) -> dict:
-    """Fan-out: run all 8 specialist agents concurrently.
-
-    Each agent is isolated: if one fails (most commonly because the LLM is
-    unreachable), the others still run to completion instead of the whole
-    batch being cancelled. A failure emits a clear "LLM is not working" log
-    for that specific agent, in real time, and its output field is filled
-    with a short explanatory placeholder instead of silently going missing.
-    If every single agent fails, that is a strong signal the LLM itself is
-    down (not a one-off), so we raise to fail the whole pipeline clearly
-    rather than saving a "completed" plan with nothing usable in it.
-    """
-    _emit(state, "InfraGenie", "⚡ Launching 8 specialist agents in parallel…")
+    _emit(state, "InfraGenie",
+          "Launching 8 specialist agents in parallel (real-time LLM tokens will appear next)…")
 
     agent_fns = [
         ("Docker Agent", "docker_artifacts", docker_agent),
@@ -272,37 +373,31 @@ async def run_all_agents(state: AgentState) -> dict:
     merged: dict = {}
     logs = []
     failures = 0
-
     for (agent_name, field, _fn), outcome in zip(agent_fns, outcomes):
         if isinstance(outcome, LLMUnavailableError):
             failures += 1
-            _emit(state, agent_name, f"❌ LLM is not working: {outcome}", "error")
-            merged[field] = f"[Unavailable — LLM is not working: {outcome}]"
-            logs.append({"agent": agent_name, "result": f"FAILED: {outcome}"})
+            _emit(state, agent_name, "LLM is not working: " + str(outcome), "error")
+            merged[field] = "[Unavailable - LLM is not working: " + str(outcome) + "]"
+            logs.append({"agent": agent_name, "result": "FAILED: " + str(outcome)})
         elif isinstance(outcome, BaseException):
-            # Covers every exception type (LLMUnavailableError handled above).
-            # Narrowing against BaseException (not Exception) cleans the
-            # `dict | BaseException` union that asyncio.gather(return_exceptions=True)
-            # produces, so the else-branch below is statically `dict`.
+            # Narrow here (asyncio.gather(return_exceptions=True) types items as
+            # `dict | BaseException`) so the `else` branch is statically `dict`.
             failures += 1
-            _emit(state, agent_name, f"❌ Failed: {outcome}", "error")
-            merged[field] = f"[Unavailable — {outcome}]"
-            logs.append({"agent": agent_name, "result": f"FAILED: {outcome}"})
+            _emit(state, agent_name, "Failed: " + str(outcome), "error")
+            merged[field] = "[Unavailable - " + str(outcome) + "]"
+            logs.append({"agent": agent_name, "result": "FAILED: " + str(outcome)})
         else:
             logs.extend(outcome.pop("agent_logs", []))
             merged.update(outcome)
 
     if failures == len(agent_fns):
-        # Every specialist agent failed — the LLM is down, not a one-off glitch.
         raise LLMUnavailableError(
-            "LLM is not working — all 8 specialist agents failed to get a response."
+            "LLM is not working - all 8 specialist agents failed to get a response."
         )
     if failures:
-        _emit(
-            state, "InfraGenie",
-            f"⚠️ {failures}/{len(agent_fns)} agent(s) failed — continuing with partial results.",
-            "error",
-        )
+        _emit(state, "InfraGenie",
+              f"{failures}/{len(agent_fns)} agent(s) failed - continuing with partial results.",
+              "error")
 
     merged["agent_logs"] = logs
     return merged
@@ -311,58 +406,44 @@ async def run_all_agents(state: AgentState) -> dict:
 # ── Build LangGraph ───────────────────────────────────────────────────────────
 
 def build_graph() -> CompiledGraph:
-    graph = StateGraph(AgentState)
-
-    graph.add_node("analyze_project", analyze_project)
-    graph.add_node("discover_apps", discover_apps)
-    graph.add_node("select_strategy", select_strategy)
-    graph.add_node("run_all_agents", run_all_agents)
-    graph.add_node("aggregate_results", aggregate_results)
-
-    graph.set_entry_point("analyze_project")
-    graph.add_edge("analyze_project", "discover_apps")
-    graph.add_edge("discover_apps", "select_strategy")
-    graph.add_edge("select_strategy", "run_all_agents")
-    graph.add_edge("run_all_agents", "aggregate_results")
-    graph.add_edge("aggregate_results", END)
-
-    return graph.compile()
+    g = StateGraph(AgentState)
+    g.add_node("analyze_project", analyze_project)
+    g.add_node("discover_apps", discover_apps)
+    g.add_node("select_strategy", select_strategy)
+    g.add_node("run_all_agents", run_all_agents)
+    g.add_node("aggregate_results", aggregate_results)
+    g.set_entry_point("analyze_project")
+    g.add_edge("analyze_project", "discover_apps")
+    g.add_edge("discover_apps", "select_strategy")
+    g.add_edge("select_strategy", "run_all_agents")
+    g.add_edge("run_all_agents", "aggregate_results")
+    g.add_edge("aggregate_results", END)
+    return g.compile()
 
 
-# Compiled graph (reused across requests)
 orchestrator = build_graph()
 
 
-async def run_orchestrator(project_id: str, project_name: str, source_summary: str) -> dict:
-    """Entry point called by background worker (no progress callback)."""
+async def run_orchestrator(project_id, project_name, source_summary):
     return await run_orchestrator_with_progress(project_id, project_name, source_summary)
 
 
 async def run_orchestrator_with_progress(
     project_id: str,
     project_name: str,
-    source_summary: str,
+    source_summary: dict,
     on_log: Optional[Callable] = None,
+    on_llm_token: Optional[Callable] = None,
 ) -> dict:
-    """Entry point with real-time progress callback."""
     initial_state = AgentState(
-        project_id=project_id,
-        project_name=project_name,
-        source_code_summary=source_summary,
-        analysis={},
-        discovered_apps=[],
-        strategy="",
-        docker_artifacts="",
-        terraform_artifacts="",
-        kubernetes_artifacts="",
-        cicd_artifacts="",
-        architecture_notes="",
-        monitoring_config="",
-        security_config="",
-        cost_estimate="",
-        agent_logs=[],
-        final_artifacts={},
-        on_log=on_log,
+        project_id=project_id, project_name=project_name,
+        source_code_summary=source_summary, analysis={},
+        discovered_apps=[], strategy="",
+        docker_artifacts="", terraform_artifacts="",
+        kubernetes_artifacts="", cicd_artifacts="",
+        architecture_notes="", monitoring_config="",
+        security_config="", cost_estimate="",
+        agent_logs=[], final_artifacts={},
+        on_log=on_log, on_llm_token=on_llm_token,
     )
-    result = await orchestrator.ainvoke(initial_state)
-    return result
+    return await orchestrator.ainvoke(initial_state)
