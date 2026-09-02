@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { FileText, Calendar, Loader, AlertTriangle, RefreshCw } from 'lucide-react';
-import { listProjects, listReports, type Project } from '@/api';
+import { listProjects, listReports, timeAgo, parseDate, type Project } from '@/api';
 
 interface Report {
   id: string;
@@ -10,16 +10,6 @@ interface Report {
   content: any;
   insights: string | null;
   created_at: string;
-}
-
-function timeAgo(dateStr: string) {
-  const diff = Date.now() - new Date(dateStr).getTime();
-  const mins = Math.floor(diff / 60000);
-  if (mins < 1) return 'just now';
-  if (mins < 60) return `${mins}m ago`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
-  return `${Math.floor(hrs / 24)}d ago`;
 }
 
 const typeColors: Record<string, string> = {
@@ -54,7 +44,7 @@ export default function ReportsPage() {
           } catch { /* no reports */ }
         })
       );
-      all.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+      all.sort((a, b) => parseDate(b.created_at).getTime() - parseDate(a.created_at).getTime());
       setReports(all);
     } catch (e: any) {
       setError(e.message || 'Failed to load reports');

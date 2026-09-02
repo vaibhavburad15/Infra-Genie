@@ -12,7 +12,7 @@ Tables (some added in v3 for the SaaS structure):
   audit_log    — every privileged action (login, project analysis, deploy approval)
 """
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, AsyncGenerator, List, Optional
 
 from sqlalchemy import (
@@ -24,10 +24,18 @@ from sqlalchemy.ext.asyncio import (
     AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, field_serializer
 import enum
 
 from config import settings
+
+
+def serialize_utc_datetime(v: Optional[datetime]) -> Optional[str]:
+    if v is None:
+        return None
+    if v.tzinfo is None:
+        return v.isoformat() + "Z"
+    return v.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 # ── Async engine ──────────────────────────────────────────────────────────────
 
@@ -275,6 +283,11 @@ class UserOut(BaseModel):
     is_active: bool
     current_org_id: Optional[uuid.UUID] = None
     created_at: datetime
+
+    @field_serializer('created_at', mode='plain')
+    def serialize_created_at(self, v: Optional[datetime]) -> Optional[str]:
+        return serialize_utc_datetime(v)
+
     class Config:
         from_attributes = True
 
@@ -306,6 +319,11 @@ class ProjectOut(BaseModel):
     logs: Optional[list] = []
     created_at: datetime
     updated_at: datetime
+
+    @field_serializer('created_at', 'updated_at', mode='plain')
+    def serialize_dates(self, v: Optional[datetime]) -> Optional[str]:
+        return serialize_utc_datetime(v)
+
     class Config:
         from_attributes = True
 
@@ -323,6 +341,11 @@ class DeploymentOut(BaseModel):
     duration_seconds: Optional[int]
     artifact_dir: Optional[str]
     created_at: datetime
+
+    @field_serializer('approved_at', 'started_at', 'completed_at', 'created_at', mode='plain')
+    def serialize_dates(self, v: Optional[datetime]) -> Optional[str]:
+        return serialize_utc_datetime(v)
+
     class Config:
         from_attributes = True
 
@@ -335,6 +358,11 @@ class ReportOut(BaseModel):
     content: Optional[dict]
     insights: Optional[str]
     created_at: datetime
+
+    @field_serializer('created_at', mode='plain')
+    def serialize_created_at(self, v: Optional[datetime]) -> Optional[str]:
+        return serialize_utc_datetime(v)
+
     class Config:
         from_attributes = True
 
@@ -359,6 +387,11 @@ class OrganizationOut(BaseModel):
     plan_projects: Optional[int]
     plan_deployments_per_month: Optional[int]
     created_at: datetime
+
+    @field_serializer('created_at', mode='plain')
+    def serialize_created_at(self, v: Optional[datetime]) -> Optional[str]:
+        return serialize_utc_datetime(v)
+
     class Config:
         from_attributes = True
 
@@ -369,6 +402,11 @@ class MembershipOut(BaseModel):
     org_id: uuid.UUID
     role: str
     joined_at: Optional[datetime]
+
+    @field_serializer('joined_at', mode='plain')
+    def serialize_joined_at(self, v: Optional[datetime]) -> Optional[str]:
+        return serialize_utc_datetime(v)
+
     class Config:
         from_attributes = True
 
@@ -386,6 +424,11 @@ class AuditLogOut(BaseModel):
     target_id: Optional[str]
     metadata_json: Optional[dict]
     created_at: datetime
+
+    @field_serializer('created_at', mode='plain')
+    def serialize_created_at(self, v: Optional[datetime]) -> Optional[str]:
+        return serialize_utc_datetime(v)
+
     class Config:
         from_attributes = True
 

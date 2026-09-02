@@ -3,7 +3,7 @@ import {
   Rocket, CheckCircle2, XCircle, Clock, Loader, ChevronRight,
   AlertTriangle, RefreshCw,
 } from 'lucide-react';
-import { listProjects, listDeployments, approveDeployment, type Project } from '@/api';
+import { listProjects, listDeployments, approveDeployment, timeAgo, parseDate, type Project } from '@/api';
 
 interface Deployment {
   id: string;
@@ -31,17 +31,6 @@ const envColors: Record<string, string> = {
   staging:     'bg-[#edf3fb] text-[#1e3a7a] border-[#a8c1ea]',
   development: 'bg-gray-100 text-gray-500 border-gray-200',
 };
-
-function timeAgo(dateStr: string | null) {
-  if (!dateStr) return '—';
-  const diff = Date.now() - new Date(dateStr).getTime();
-  const mins = Math.floor(diff / 60000);
-  if (mins < 1) return 'just now';
-  if (mins < 60) return `${mins}m ago`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
-  return `${Math.floor(hrs / 24)}d ago`;
-}
 
 export default function DeploymentsPage() {
   const [projects, setProjects] = useState<Project[]>([]);
@@ -73,7 +62,7 @@ export default function DeploymentsPage() {
         })
       );
       // Sort by created_at descending
-      all.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+      all.sort((a, b) => parseDate(b.created_at).getTime() - parseDate(a.created_at).getTime());
       setDeployments(all);
     } catch (e: any) {
       setError(e.message || 'Failed to load deployments');

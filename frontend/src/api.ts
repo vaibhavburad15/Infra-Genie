@@ -130,14 +130,14 @@ export async function register(payload: { email: string; username: string;
   localStorage.setItem('access_token', data.access_token);
   return data;
 }
-export async function requestEmailOtp(payload: { email: string; }) {
-  return request('/auth/email-otp/request', {
+export async function requestEmailOtp(payload: { email: string; }): Promise<{ message: string; dev_otp?: string }> {
+  return request<{ message: string; dev_otp?: string }>('/auth/email-otp/request', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });
 }
-export async function verifyEmailOtp(payload: { email: string; otp: string; }) {
-  return request('/auth/email-otp/verify', {
+export async function verifyEmailOtp(payload: { email: string; otp: string; }): Promise<{ message: string }> {
+  return request<{ message: string }>('/auth/email-otp/verify', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });
@@ -288,3 +288,30 @@ export async function streamInsights(opts: { projectId: string; question: string
 }
 
 export async function checkHealth() { return request('/health'); }
+
+// ── Date Helpers ─────────────────────────────────────────────────────────────
+
+export function parseDate(dateStr: string | null | undefined): Date {
+  if (!dateStr) return new Date();
+  let normalized = dateStr.trim();
+  if (!normalized) return new Date();
+  if (normalized.includes(' ') && !normalized.includes('T')) {
+    normalized = normalized.replace(' ', 'T');
+  }
+  if (normalized.includes('T') && !normalized.endsWith('Z') && !/[+-]\d{2}:?\d{2}$/.test(normalized)) {
+    normalized += 'Z';
+  }
+  const d = new Date(normalized);
+  return isNaN(d.getTime()) ? new Date(dateStr) : d;
+}
+
+export function timeAgo(dateStr: string | null | undefined): string {
+  if (!dateStr) return '—';
+  const diff = Date.now() - parseDate(dateStr).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return `${Math.floor(hrs / 24)}d ago`;
+}

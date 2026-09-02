@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Server, GitBranch, Rocket, Activity, Loader,
          FolderGit2, AlertTriangle, RefreshCw } from 'lucide-react';
-import { listProjects, getMetricsOverview,
+import { listProjects, getMetricsOverview, timeAgo, parseDate,
          type Project, type MetricsOverview } from '@/api';
 
 const sc: Record<string, { dot: string; text: string; bg: string; label: string }> = {
@@ -12,13 +12,6 @@ const sc: Record<string, { dot: string; text: string; bg: string; label: string 
   deployed:  { dot: 'bg-emerald-500', text: 'text-emerald-600', bg: 'bg-emerald-50', label: 'Deployed' },
   failed:    { dot: 'bg-red-500', text: 'text-red-600', bg: 'bg-red-50', label: 'Failed' },
 };
-
-function timeAgo(d: string) {
-  const m = Math.floor((Date.now() - new Date(d).getTime()) / 60000);
-  if (m < 1) return 'just now'; if (m < 60) return `${m}m ago`;
-  const h = Math.floor(m / 60); if (h < 24) return `${h}h ago`;
-  return `${Math.floor(h / 24)}d ago`;
-}
 
 export default function DashboardPage() {
   const [projects, setProjects] = useState<Project[]>([]);
@@ -32,7 +25,7 @@ export default function DashboardPage() {
   };
   useEffect(() => { load(); }, []);
   const recent = [...projects].sort((a, b) =>
-    new Date(b.created_at).getTime() - new Date(a.created_at).getTime()).slice(0, 6);
+    parseDate(b.created_at).getTime() - parseDate(a.created_at).getTime()).slice(0, 6);
 
   return (
     <div className="p-6 space-y-5 overflow-y-auto h-full bg-[#f4f6fa]">

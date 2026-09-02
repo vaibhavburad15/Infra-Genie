@@ -174,7 +174,7 @@ export default function SettingsPage() {
               <div key={a.id} className="flex items-center gap-3 py-2.5">
                 <span className={`text-[10px] uppercase font-bold px-2 py-0.5 rounded ${actionColor(a.action)}`}>{a.action}</span>
                 <span className="text-xs text-gray-500">{a.target_type || ''} · {(a.target_id || '').slice(0, 8)}</span>
-                <span className="ml-auto text-[10px] text-gray-400">{new Date(a.created_at).toLocaleString()}</span>
+                <span className="ml-auto text-[10px] text-gray-400">{api.parseDate(a.created_at).toLocaleString()}</span>
               </div>
             ))}
           </div>
