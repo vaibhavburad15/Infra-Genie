@@ -45,7 +45,7 @@ export default function Navbar() {
           aria-label="Infra Genie home"
         >
           <span className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-xl bg-white p-1 shadow-[0_0_24px_rgba(201,105,42,0.25)] transition-shadow group-hover:shadow-[0_0_32px_rgba(201,105,42,0.45)]">
-            <img src="/logo.png" alt="Infra Genie logo" className="h-full w-full object-contain" />
+            <img src="/favicon.png" alt="Infra Genie logo" className="h-full w-full object-contain" />
           </span>
           <span className="font-display text-lg font-bold tracking-tight text-slate-50">
             Infra<span className="text-copper-400"> Genie</span>
@@ -67,13 +67,7 @@ export default function Navbar() {
         </nav>
 
         <div className="hidden items-center gap-4 lg:flex">
-          <div
-            data-testid="nav-status-pill"
-            className="flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5"
-          >
-            <span className="status-dot h-1.5 w-1.5 rounded-full bg-emerald-400" />
-            <span className="font-mono text-[11px] tracking-wider text-slate-400">10 AGENTS ONLINE</span>
-          </div>
+          
           <a
             data-testid="nav-login-link"
             href={LOGIN_URL}
