@@ -5,6 +5,7 @@ import {
   Code, Box, Cloud, GitBranch, Shield, Activity, DollarSign,
   Cpu, Database, Layers, FileCode, ExternalLink, Terminal,
   Sparkles,
+  type LucideIcon,
 } from 'lucide-react';
 import {
   listProjects, createProject, deleteProject, analyzeProject, getProject,
@@ -28,7 +29,7 @@ const sourceTypeLabels: Record<string, string> = { upload: 'File Upload', github
 
 // ── Artifact tabs ─────────────────────────────────────────────────────────────
 
-const TABS: { key: keyof DeploymentPlan; label: string; icon: React.ElementType }[] = [
+const TABS: { key: keyof DeploymentPlan; label: string; icon: LucideIcon }[] = [
   { key: 'analysis',      label: 'Analysis',      icon: Cpu },
   { key: 'discovered_apps', label: 'Services',    icon: Layers },
   { key: 'docker',        label: 'Dockerfile',    icon: Box },
@@ -1031,3 +1032,4 @@ export default function ProjectsPage() {
     </div>
   );
 }
+

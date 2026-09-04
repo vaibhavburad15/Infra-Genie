@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { AuthProvider, useAuth } from '@/context/AuthContext';
 import LoginPage from '@/pages/LoginPage';
 import RegisterPage from '@/pages/RegisterPage';
+import LandingPage from '@/pages/LandingPage';
 import Sidebar from '@/components/Sidebar';
 import Header from '@/components/Header';
 import AIAssistant from '@/components/AIAssistant';
@@ -39,7 +40,41 @@ const pageMeta: Record<Page, { title: string; subtitle: string }> = {
 
 function AuthGate() {
   const { user, isLoading } = useAuth();
-  const [authView, setAuthView] = useState<'login' | 'register'>('login');
+  const getRouteFromPath = () => {
+    const path = window.location.pathname;
+    if (['/login', '/signin', '/sign-in'].includes(path)) return 'login';
+    if (['/register', '/signup', '/sign-up'].includes(path)) return 'register';
+    if (path === '/') return 'landing';
+    return 'login';
+  };
+  const getAuthViewFromPath = () =>
+    getRouteFromPath() === 'register'
+      ? 'register'
+      : 'login';
+  const [publicRoute, setPublicRoute] = useState<'landing' | 'login' | 'register'>(getRouteFromPath);
+  const [authView, setAuthView] = useState<'login' | 'register'>(getAuthViewFromPath);
+
+  useEffect(() => {
+    const syncPublicRoute = () => {
+      const route = getRouteFromPath();
+      setPublicRoute(route);
+      if (route !== 'landing') setAuthView(route);
+    };
+    window.addEventListener('popstate', syncPublicRoute);
+    return () => window.removeEventListener('popstate', syncPublicRoute);
+  }, []);
+
+  const showLogin = () => {
+    window.history.pushState(null, '', '/login');
+    setPublicRoute('login');
+    setAuthView('login');
+  };
+
+  const showRegister = () => {
+    window.history.pushState(null, '', '/register');
+    setPublicRoute('register');
+    setAuthView('register');
+  };
 
   if (isLoading) {
     return (
@@ -50,10 +85,14 @@ function AuthGate() {
   }
 
   if (!user) {
+    if (publicRoute === 'landing') {
+      return <LandingPage />;
+    }
+
     return authView === 'login' ? (
-      <LoginPage onSwitchToRegister={() => setAuthView('register')} />
+      <LoginPage onSwitchToRegister={showRegister} />
     ) : (
-      <RegisterPage onSwitchToLogin={() => setAuthView('login')} />
+      <RegisterPage onSwitchToLogin={showLogin} />
     );
   }
 
@@ -102,3 +141,4 @@ export default function App() {
     </AuthProvider>
   );
 }
+

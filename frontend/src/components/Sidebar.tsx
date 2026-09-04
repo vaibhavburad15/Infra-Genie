@@ -12,6 +12,7 @@ import {
   Settings,
   Bot,
   LogOut,
+  type LucideIcon,
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 
@@ -22,7 +23,7 @@ interface SidebarProps {
   onNavigate: (page: Page) => void;
 }
 
-const navItems: { id: Page; label: string; icon: React.ElementType }[] = [
+const navItems: { id: Page; label: string; icon: LucideIcon }[] = [
   { id: 'dashboard', label: 'Overview', icon: LayoutDashboard },
   { id: 'projects', label: 'Projects', icon: Server },
   { id: 'infrastructure', label: 'Infrastructure', icon: Server },
@@ -90,3 +91,5 @@ export default function Sidebar({ activePage, onNavigate }: SidebarProps) {
     </aside>
   );
 }
+
+
