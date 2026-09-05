@@ -17,7 +17,7 @@ export default function Footer() {
           <div className="lg:col-span-5">
             <div className="flex items-center gap-3">
               <span className="flex h-11 w-11 items-center justify-center overflow-hidden rounded-xl bg-white p-1">
-                <img src="/logo.png" alt="Infra Genie logo" className="h-full w-full object-contain" />
+                <img src="/favicon.png" alt="Infra Genie logo" className="h-full w-full object-contain" />
               </span>
               <span className="font-display text-xl font-bold tracking-tight text-slate-50">
                 Infra<span className="text-copper-400"> Genie</span>

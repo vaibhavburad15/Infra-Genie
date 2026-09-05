@@ -52,11 +52,7 @@ export default function Hero({ theme }: { theme: 'dark' | 'light' }) {
 
       <div className="relative z-10 mx-auto w-full max-w-7xl px-4 pb-28 pt-36 sm:px-6 lg:px-12 lg:pt-40">
         <div className="max-w-3xl">
-          <motion.div {...fade(0.15)} className="flex items-center gap-3">
-            <span className="rounded-full border border-copper-500/30 bg-copper-500/10 px-3 py-1 font-mono text-[11px] tracking-[0.22em] text-copper-300">
-              AI-POWERED CLOUDOPS PLATFORM
-            </span>
-          </motion.div>
+          
 
           <h1 className="mt-7 text-5xl sm:text-6xl lg:text-[5.4rem]">
             {HEADLINE.map((l, i) => (

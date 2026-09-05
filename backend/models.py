@@ -74,6 +74,10 @@ async def init_db():
             "ALTER TABLE projects ADD COLUMN IF NOT EXISTS detailed_analysis JSON"))
         await conn.execute(text(
             "ALTER TABLE deployments ADD COLUMN IF NOT EXISTS org_id UUID"))
+        await conn.execute(text(
+            "ALTER TABLE deployments ADD COLUMN IF NOT EXISTS duration_seconds INTEGER"))
+        await conn.execute(text(
+            "ALTER TABLE deployments ADD COLUMN IF NOT EXISTS artifact_dir VARCHAR(500)"))
 
 
 # ── Enums ─────────────────────────────────────────────────────────────────────

@@ -50,7 +50,7 @@ export default function Navbar({ theme, onToggleTheme }: NavbarProps) {
           aria-label="Infra Genie home"
         >
           <span className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-xl bg-white p-1 shadow-[0_0_24px_rgba(201,105,42,0.25)] transition-shadow group-hover:shadow-[0_0_32px_rgba(201,105,42,0.45)]">
-            <img src="/logo.png" alt="Infra Genie logo" className="h-full w-full object-contain" />
+            <img src="/favicon.png" alt="Infra Genie logo" className="h-full w-full object-contain" />
           </span>
           <span className="font-display text-lg font-bold tracking-tight text-slate-50">
             Infra<span className="text-copper-400"> Genie</span>
@@ -72,15 +72,13 @@ export default function Navbar({ theme, onToggleTheme }: NavbarProps) {
         </nav>
 
         <div className="hidden items-center gap-4 lg:flex">
-          <button
-            data-testid="nav-theme-toggle"
-            type="button"
-            onClick={onToggleTheme}
-            className="flex h-10 w-10 items-center justify-center rounded-full border border-white/10 bg-white/[0.04] text-copper-300 transition-all hover:border-copper-500/50 hover:bg-white/[0.08] hover:text-copper-200"
-            aria-label={theme === 'light' ? 'Switch to dark mode' : 'Switch to light mode'}
+          <div
+            data-testid="nav-status-pill"
+            className="flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5"
           >
-            {theme === 'light' ? <Moon size={17} /> : <Sun size={17} />}
-          </button>
+            <span className="status-dot h-1.5 w-1.5 rounded-full bg-emerald-400" />
+            <span className="font-mono text-[11px] tracking-wider text-slate-400">10 AGENTS ONLINE</span>
+          </div>
           <a
             data-testid="nav-login-link"
             href={LOGIN_URL}
