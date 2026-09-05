@@ -1,6 +1,6 @@
 import { ArrowRight } from 'lucide-react';
 import { Reveal } from './Reveal';
-import { REGISTER_URL } from '../config';
+import { REGISTER_URL, navigateToRegister } from '../config';
 
 export default function FinalCTA() {
   return (
@@ -45,3 +45,4 @@ export default function FinalCTA() {
     </section>
   );
 }
+

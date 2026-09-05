@@ -1,4 +1,4 @@
-import { LOGIN_URL, REGISTER_URL } from '../config';
+import { LOGIN_URL, REGISTER_URL, navigateToLogin, navigateToRegister } from '../config';
 import { scrollToId } from '../lib/scroll';
 
 const NAV = [
@@ -57,12 +57,12 @@ export default function Footer() {
             <h3 className="font-mono text-[11px] uppercase tracking-[0.22em] text-slate-500">Platform</h3>
             <ul className="mt-5 space-y-3">
               <li>
-                <a data-testid="footer-login-link" href={LOGIN_URL} className="text-sm text-slate-400 transition-colors hover:text-copper-300">
+                <a data-testid="footer-login-link" href={LOGIN_URL} onClick={(event) => { event.preventDefault(); navigateToLogin(); }} className="text-sm text-slate-400 transition-colors hover:text-copper-300">
                   Log in
                 </a>
               </li>
               <li>
-                <a data-testid="footer-register-link" href={REGISTER_URL} className="text-sm text-slate-400 transition-colors hover:text-copper-300">
+                <a data-testid="footer-register-link" href={REGISTER_URL} onClick={(event) => { event.preventDefault(); navigateToRegister(); }} className="text-sm text-slate-400 transition-colors hover:text-copper-300">
                   Create an account
                 </a>
               </li>
@@ -84,3 +84,4 @@ export default function Footer() {
     </footer>
   );
 }
+

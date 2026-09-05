@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { ArrowUpRight, Menu, X } from 'lucide-react';
-import { LOGIN_URL, REGISTER_URL } from '../config';
+import { ArrowUpRight, Menu, Moon, Sun, X } from 'lucide-react';
+import { LOGIN_URL, REGISTER_URL, navigateToLogin, navigateToRegister } from '../config';
 import { scrollToId } from '../lib/scroll';
 
 const links = [
@@ -12,7 +12,12 @@ const links = [
   { label: 'Architecture', id: 'architecture' },
 ];
 
-export default function Navbar() {
+interface NavbarProps {
+  theme: 'dark' | 'light';
+  onToggleTheme: () => void;
+}
+
+export default function Navbar({ theme, onToggleTheme }: NavbarProps) {
   const [scrolled, setScrolled] = useState(false);
   const [open, setOpen] = useState(false);
 
@@ -67,13 +72,15 @@ export default function Navbar() {
         </nav>
 
         <div className="hidden items-center gap-4 lg:flex">
-          <div
-            data-testid="nav-status-pill"
-            className="flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5"
+          <button
+            data-testid="nav-theme-toggle"
+            type="button"
+            onClick={onToggleTheme}
+            className="flex h-10 w-10 items-center justify-center rounded-full border border-white/10 bg-white/[0.04] text-copper-300 transition-all hover:border-copper-500/50 hover:bg-white/[0.08] hover:text-copper-200"
+            aria-label={theme === 'light' ? 'Switch to dark mode' : 'Switch to light mode'}
           >
-            <span className="status-dot h-1.5 w-1.5 rounded-full bg-emerald-400" />
-            <span className="font-mono text-[11px] tracking-wider text-slate-400">10 AGENTS ONLINE</span>
-          </div>
+            {theme === 'light' ? <Moon size={17} /> : <Sun size={17} />}
+          </button>
           <a
             data-testid="nav-login-link"
             href={LOGIN_URL}
@@ -91,15 +98,26 @@ export default function Navbar() {
           </a>
         </div>
 
-        <button
-          data-testid="mobile-nav-toggle"
-          onClick={() => setOpen((v) => !v)}
-          className="flex h-10 w-10 items-center justify-center rounded-xl border border-white/10 bg-white/[0.04] text-slate-200 lg:hidden"
-          aria-label={open ? 'Close menu' : 'Open menu'}
-          aria-expanded={open}
-        >
-          {open ? <X size={18} /> : <Menu size={18} />}
-        </button>
+        <div className="flex items-center gap-2 lg:hidden">
+          <button
+            data-testid="mobile-theme-toggle"
+            type="button"
+            onClick={onToggleTheme}
+            className="flex h-10 w-10 items-center justify-center rounded-xl border border-white/10 bg-white/[0.04] text-copper-300 transition-colors hover:border-copper-500/50"
+            aria-label={theme === 'light' ? 'Switch to dark mode' : 'Switch to light mode'}
+          >
+            {theme === 'light' ? <Moon size={17} /> : <Sun size={17} />}
+          </button>
+          <button
+            data-testid="mobile-nav-toggle"
+            onClick={() => setOpen((v) => !v)}
+            className="flex h-10 w-10 items-center justify-center rounded-xl border border-white/10 bg-white/[0.04] text-slate-200"
+            aria-label={open ? 'Close menu' : 'Open menu'}
+            aria-expanded={open}
+          >
+            {open ? <X size={18} /> : <Menu size={18} />}
+          </button>
+        </div>
       </div>
 
       <AnimatePresence>
@@ -147,3 +165,4 @@ export default function Navbar() {
     </header>
   );
 }
+

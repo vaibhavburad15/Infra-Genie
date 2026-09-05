@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import Lenis from 'lenis';
 import Navbar from '@/landing/components/Navbar';
 import Hero from '@/landing/components/Hero';
@@ -19,6 +19,18 @@ declare global {
 }
 
 export default function LandingPage() {
+  const [theme, setTheme] = useState<'dark' | 'light'>(() => {
+    const saved = localStorage.getItem('landing-theme');
+    if (saved === 'dark' || saved === 'light') return saved;
+    return 'dark';
+  });
+
+  const isLight = theme === 'light';
+
+  useEffect(() => {
+    localStorage.setItem('landing-theme', theme);
+  }, [theme]);
+
   useEffect(() => {
     if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
     const lenis = new Lenis({ duration: 1.15, smoothWheel: true });
@@ -37,11 +49,11 @@ export default function LandingPage() {
   }, []);
 
   return (
-    <div className="relative min-h-screen bg-ink-950 font-body text-slate-100 antialiased">
+    <div className={`landing-page ${isLight ? 'landing-light' : 'landing-dark'} relative min-h-screen bg-ink-950 font-body text-slate-100 antialiased`}>
       <div className="noise-overlay" aria-hidden="true" />
-      <Navbar />
+      <Navbar theme={theme} onToggleTheme={() => setTheme(isLight ? 'dark' : 'light')} />
       <main>
-        <Hero />
+        <Hero theme={theme} />
         <Marquee />
         <Problem />
         <Features />

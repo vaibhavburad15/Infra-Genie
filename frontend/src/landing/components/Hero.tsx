@@ -2,7 +2,7 @@ import { lazy, Suspense } from 'react';
 import { motion, useReducedMotion } from 'framer-motion';
 import { ArrowRight, ChevronDown, GitBranch } from 'lucide-react';
 import TerminalWidget from './TerminalWidget';
-import { REGISTER_URL } from '../config';
+import { REGISTER_URL, navigateToRegister } from '../config';
 import { scrollToId } from '../lib/scroll';
 
 const HeroScene = lazy(() => import('./HeroScene'));
@@ -35,7 +35,7 @@ function MaskedLine({ text, accent, index }: { text: string; accent: boolean; in
   );
 }
 
-export default function Hero() {
+export default function Hero({ theme }: { theme: 'dark' | 'light' }) {
   const reduce = useReducedMotion();
   const fade = (delay: number) => ({
     initial: { opacity: 0, y: reduce ? 0 : 24 },
@@ -46,7 +46,7 @@ export default function Hero() {
   return (
     <section data-testid="hero-section" className="relative flex min-h-screen items-center overflow-hidden">
       <Suspense fallback={<div className="absolute inset-0 bg-ink-950" />}>
-        <HeroScene />
+        <HeroScene theme={theme} />
       </Suspense>
       <div className="blueprint-grid pointer-events-none absolute inset-0" aria-hidden="true" />
 
@@ -130,4 +130,6 @@ export default function Hero() {
     </section>
   );
 }
+
+
 

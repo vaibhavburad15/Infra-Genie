@@ -3,6 +3,8 @@ import { Canvas, useFrame } from '@react-three/fiber';
 import { Line, Sparkles } from '@react-three/drei';
 import * as THREE from 'three';
 
+type Theme = 'dark' | 'light';
+
 function mulberry32(seed: number) {
   return () => {
     seed |= 0;
@@ -38,7 +40,7 @@ function buildGraph() {
   return { nodes, edges };
 }
 
-function Packet({ a, b, speed, offset }: { a: Vec3; b: Vec3; speed: number; offset: number }) {
+function Packet({ a, b, speed, offset, theme }: { a: Vec3; b: Vec3; speed: number; offset: number; theme: Theme }) {
   const ref = useRef<THREE.Mesh>(null);
   useFrame(({ clock }) => {
     const t = (clock.elapsedTime * speed + offset) % 1;
@@ -51,16 +53,17 @@ function Packet({ a, b, speed, offset }: { a: Vec3; b: Vec3; speed: number; offs
   return (
     <mesh ref={ref}>
       <sphereGeometry args={[0.045, 8, 8]} />
-      <meshBasicMaterial color="#f0bc98" />
+      <meshBasicMaterial color={theme === 'light' ? '#d97f45' : '#f0bc98'} />
     </mesh>
   );
 }
 
-function NodeField({ reduced }: { reduced: boolean }) {
+function NodeField({ reduced, theme }: { reduced: boolean; theme: Theme }) {
   const group = useRef<THREE.Group>(null);
   const core = useRef<THREE.Mesh>(null);
   const pointer = useRef({ x: 0, y: 0 });
   const { nodes, edges } = useMemo(buildGraph, []);
+  const isLight = theme === 'light';
 
   useFrame((state, delta) => {
     if (!group.current) return;
@@ -81,80 +84,78 @@ function NodeField({ reduced }: { reduced: boolean }) {
 
   return (
     <group ref={group} position={[3.1, -0.1, 0]}>
-      {/* Central copper core */}
       <mesh ref={core}>
         <icosahedronGeometry args={[0.8, 1]} />
         <meshStandardMaterial
           color="#c9692a"
           emissive="#c9692a"
-          emissiveIntensity={0.55}
+          emissiveIntensity={isLight ? 0.18 : 0.55}
           wireframe
           transparent
-          opacity={0.7}
+          opacity={isLight ? 0.44 : 0.7}
         />
       </mesh>
       <mesh>
         <icosahedronGeometry args={[0.3, 2]} />
-        <meshStandardMaterial color="#e69c6a" emissive="#e08a4b" emissiveIntensity={1.1} />
+        <meshStandardMaterial color={isLight ? '#f0bc98' : '#e69c6a'} emissive="#e08a4b" emissiveIntensity={isLight ? 0.35 : 1.1} />
       </mesh>
 
-      {/* Edges */}
       {edges.map(([i, j], k) => (
         <Line
           key={k}
           points={[nodes[i], nodes[j]]}
-          color={k % 4 === 0 ? '#c9692a' : '#3a5aa8'}
+          color={k % 4 === 0 ? '#c9692a' : isLight ? '#8aa3cc' : '#3a5aa8'}
           transparent
-          opacity={k % 4 === 0 ? 0.5 : 0.28}
+          opacity={isLight ? (k % 4 === 0 ? 0.26 : 0.18) : k % 4 === 0 ? 0.5 : 0.28}
           lineWidth={1}
         />
       ))}
 
-      {/* Nodes */}
       {nodes.map((p, i) => (
         <mesh key={i} position={p}>
           <sphereGeometry args={[i % 6 === 0 ? 0.1 : 0.06, 12, 12]} />
           <meshStandardMaterial
-            color={i % 6 === 0 ? '#e08a4b' : '#8fb0ff'}
+            color={i % 6 === 0 ? '#e08a4b' : isLight ? '#c9d7ff' : '#8fb0ff'}
             emissive={i % 6 === 0 ? '#c9692a' : '#2d56a8'}
-            emissiveIntensity={i % 6 === 0 ? 1.4 : 0.7}
+            emissiveIntensity={isLight ? 0.22 : i % 6 === 0 ? 1.4 : 0.7}
           />
         </mesh>
       ))}
 
-      {/* Data packets riding the edges */}
       {edges.slice(0, 8).map(([i, j], k) => (
-        <Packet key={k} a={nodes[i]} b={nodes[j]} speed={0.25 + (k % 3) * 0.12} offset={k * 0.13} />
+        <Packet key={k} a={nodes[i]} b={nodes[j]} speed={0.25 + (k % 3) * 0.12} offset={k * 0.13} theme={theme} />
       ))}
 
-      <Sparkles count={110} scale={[14, 7, 7]} size={1.5} speed={reduced ? 0 : 0.22} color="#e08a4b" opacity={0.5} />
-      <Sparkles count={70} scale={[14, 7, 7]} size={1} speed={reduced ? 0 : 0.15} color="#7099d8" opacity={0.4} />
+      <Sparkles count={110} scale={[14, 7, 7]} size={1.5} speed={reduced ? 0 : 0.22} color="#e08a4b" opacity={isLight ? 0.2 : 0.5} />
+      <Sparkles count={70} scale={[14, 7, 7]} size={1} speed={reduced ? 0 : 0.15} color="#7099d8" opacity={isLight ? 0.16 : 0.4} />
     </group>
   );
 }
 
-export default function HeroScene() {
+export default function HeroScene({ theme }: { theme: Theme }) {
   const reduced =
     typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const isLight = theme === 'light';
+  const background = isLight ? '#f8fbff' : '#070b14';
 
   return (
-    <div className="absolute inset-0" aria-hidden="true">
+    <div className="hero-scene absolute inset-0" aria-hidden="true">
       <Canvas
         camera={{ position: [0, 0.6, 9.5], fov: 42 }}
         dpr={[1, 1.75]}
         gl={{ antialias: true, powerPreference: 'high-performance' }}
       >
-        <color attach="background" args={['#070b14']} />
-        <fog attach="fog" args={['#070b14', 11, 24]} />
-        <ambientLight intensity={0.55} />
-        <directionalLight position={[6, 8, 6]} intensity={1.1} color="#a8c1ea" />
-        <pointLight position={[0, 0, 2]} intensity={55} distance={22} decay={2} color="#c9692a" />
-        <NodeField reduced={reduced} />
+        <color attach="background" args={[background]} />
+        <fog attach="fog" args={[background, isLight ? 15 : 11, isLight ? 34 : 24]} />
+        <ambientLight intensity={isLight ? 0.95 : 0.55} />
+        <directionalLight position={[6, 8, 6]} intensity={isLight ? 0.8 : 1.1} color={isLight ? '#ffffff' : '#a8c1ea'} />
+        <pointLight position={[0, 0, 2]} intensity={isLight ? 18 : 55} distance={22} decay={2} color="#c9692a" />
+        <NodeField reduced={reduced} theme={theme} />
       </Canvas>
-      {/* Vignette + readability scrims */}
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_60%_55%_at_68%_45%,transparent_40%,#070b14_100%)]" />
-      <div className="pointer-events-none absolute inset-0 bg-gradient-to-r from-ink-950 via-ink-950/55 to-transparent" />
-      <div className="pointer-events-none absolute inset-x-0 bottom-0 h-40 bg-gradient-to-t from-ink-950 to-transparent" />
+      <div className="hero-scene-vignette pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_60%_55%_at_68%_45%,transparent_40%,#070b14_100%)]" />
+      <div className="hero-scene-side-scrim pointer-events-none absolute inset-0 bg-gradient-to-r from-ink-950 via-ink-950/55 to-transparent" />
+      <div className="hero-scene-bottom-scrim pointer-events-none absolute inset-x-0 bottom-0 h-40 bg-gradient-to-t from-ink-950 to-transparent" />
+      <div className="hero-scene-light-wash pointer-events-none absolute inset-0 opacity-0 transition-opacity duration-300" />
     </div>
   );
 }
