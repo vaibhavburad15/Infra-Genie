@@ -1,6 +1,6 @@
 // src/pages/LoginPage.tsx
 import { useState, FormEvent } from 'react';
-import { useAuth } from '@/context/AuthContext';
+import { useAuth } from '@/context/useAuth';
 
 interface LoginPageProps {
   onSwitchToRegister: () => void;

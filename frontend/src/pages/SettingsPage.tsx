@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Settings, User, Bell, Shield, Cloud, Zap, LogOut,
          Building2, Loader, AlertTriangle, RefreshCw, Plus, CheckCircle2,
          ShieldCheck } from 'lucide-react';
-import { useAuth } from '@/context/AuthContext';
+import { useAuth } from '@/context/useAuth';
 import * as api from '@/api';
 import type { UserRole, Organization, Subscription, AuditLogEntry } from '@/api';
 

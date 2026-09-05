@@ -260,6 +260,24 @@ class AuditLog(Base):
     created_at: Mapped[Optional[datetime]] = mapped_column(DateTime, default=datetime.utcnow, index=True)
 
 
+class AgentConfig(Base):
+    """Per-user enable/disable state + run stats for a pipeline agent."""
+
+    __tablename__ = "agent_configs"
+    __table_args__ = (
+        Index("ix_agent_config_user_agent", "user_id", "agent_id", unique=True),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    agent_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    runs: Mapped[int] = mapped_column(Integer, default=0)
+    successes: Mapped[int] = mapped_column(Integer, default=0)
+    last_run_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 # ── Pydantic Schemas ──────────────────────────────────────────────────────────
 
 class UserCreate(BaseModel):
@@ -373,6 +391,10 @@ class ReportOut(BaseModel):
 
 class ApproveDeployment(BaseModel):
     approved: bool
+
+
+class AgentConfigUpdate(BaseModel):
+    enabled: bool
 
 
 # ── v3 SaaS schemas ───────────────────────────────────────────────────────────

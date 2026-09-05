@@ -255,6 +255,57 @@ def _fallback_plan_from_static(det: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+# ── Agent run stats ───────────────────────────────────────────────────────────
+
+# Maps the agent display name emitted in pipeline logs to the registry id used
+# by /agents (see agent_routes.AGENT_ROSTER). Keep in sync with agents.py.
+AGENT_ID_BY_LOG_NAME = {
+    "AI Project Analyzer": "analyzer",
+    "Application Discovery": "discovery",
+    "Docker Agent": "docker",
+    "Terraform Agent": "terraform",
+    "Kubernetes Agent": "kubernetes",
+    "CI/CD Agent": "cicd",
+    "Architecture Agent": "architecture",
+    "Monitoring Agent": "monitoring",
+    "Security Agent": "security",
+    "Cost Agent": "cost",
+}
+
+
+def _record_agent_run(db, owner_id, agent_name: str, level: str) -> None:
+    """Increment run/success counters for an agent in the agent_configs table."""
+    from models import AgentConfig
+
+    agent_id = AGENT_ID_BY_LOG_NAME.get(agent_name)
+    if not agent_id:
+        return
+
+    cfg = (
+        db.query(AgentConfig)
+        .filter(
+            AgentConfig.user_id == owner_id,
+            AgentConfig.agent_id == agent_id,
+        )
+        .first()
+    )
+    if cfg is None:
+        cfg = AgentConfig(user_id=owner_id, agent_id=agent_id, enabled=True)
+        db.add(cfg)
+
+    cfg.runs = (cfg.runs or 0) + 1
+    if level == "success":
+        cfg.successes = (cfg.successes or 0) + 1
+    cfg.last_run_at = datetime.utcnow()
+    try:
+        db.commit()
+    except Exception:
+        try:
+            db.rollback()
+        except Exception:
+            pass
+
+
 # ── Main task: analyze project ────────────────────────────────────────────────
 
 def task_analyze_project(project_id: str) -> None:
@@ -389,6 +440,8 @@ def task_analyze_project(project_id: str) -> None:
                 p = db.query(Project).filter(Project.id == project_id).first()
                 if p:
                     _emit_log(r, db, p, level, agent, message[:1500])
+                    # Track real run stats for the agent fleet page
+                    _record_agent_run(db, p.owner_id, agent, level)
             except Exception:
                 pass
 

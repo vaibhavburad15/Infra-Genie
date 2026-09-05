@@ -758,3 +758,10 @@ async def stream_project_logs(project_id,
 @app.get("/health", tags=["system"])
 async def health():
     return {"status": "ok", "service": "InfraGenie API v3", "version": "3.0.0"}
+
+
+# ── Agent registry & configuration API ───────────────────────────────────────
+# Imported at the bottom so agent_routes can define its own auth dependency
+# without a circular import on main.
+from agent_routes import router as agent_router
+app.include_router(agent_router)

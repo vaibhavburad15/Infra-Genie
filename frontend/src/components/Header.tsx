@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { Search, Bell, HelpCircle, ChevronDown, Command, LogOut,
          Settings as SettingsIcon, Building2 } from 'lucide-react';
-import { useAuth } from '@/context/AuthContext';
+import { useAuth } from '@/context/useAuth';
 import type { UserRole, Organization } from '@/api';
 import * as api from '@/api';
 
@@ -58,16 +58,6 @@ export default function Header({ title, subtitle, onNavigate }:
 
   return (
     <header className="h-16 flex items-center justify-between px-6 bg-white border-b border-gray-100 flex-shrink-0">
-      <div>
-        <div className="flex items-center gap-2">
-          <h1 className="text-[#1e3a7a] font-bold text-xl leading-tight">{title}</h1>
-          <span className="px-2 py-0.5 rounded-full bg-[#edf3fb] text-[#1e3a7a] text-[10px] font-semibold uppercase tracking-wide border border-[#a8c1ea]/40">
-            SaaS
-          </span>
-        </div>
-        <p className="text-gray-400 text-xs">{subtitle}</p>
-      </div>
-
       {/* Org switcher (v3) */}
       <div className="relative" ref={orgMenuRef}>
         <button
