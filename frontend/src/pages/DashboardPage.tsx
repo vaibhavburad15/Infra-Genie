@@ -5,12 +5,12 @@ import { listProjects, getMetricsOverview, timeAgo, parseDate,
          type Project, type MetricsOverview } from '@/api';
 
 const sc: Record<string, { dot: string; text: string; bg: string; label: string }> = {
-  pending:   { dot: 'bg-gray-400', text: 'text-gray-500', bg: 'bg-gray-100', label: 'Pending' },
-  analyzing: { dot: 'bg-[#c9692a] animate-pulse', text: 'text-[#c9692a]', bg: 'bg-[#fdf3eb]', label: 'Analyzing' },
-  ready:     { dot: 'bg-emerald-500', text: 'text-emerald-600', bg: 'bg-emerald-50', label: 'Ready' },
-  deploying: { dot: 'bg-[#1e3a7a] animate-pulse', text: 'text-[#1e3a7a]', bg: 'bg-[#edf3fb]', label: 'Deploying' },
-  deployed:  { dot: 'bg-emerald-500', text: 'text-emerald-600', bg: 'bg-emerald-50', label: 'Deployed' },
-  failed:    { dot: 'bg-red-500', text: 'text-red-600', bg: 'bg-red-50', label: 'Failed' },
+  pending:   { dot: 'bg-gray-400',                      text: 'text-gray-500',    bg: 'bg-gray-100',   label: 'Pending' },
+  analyzing: { dot: 'bg-[#c9692a] animate-pulse',       text: 'text-[#c9692a]',  bg: 'bg-[#fdf3eb]',  label: 'Analyzing' },
+  ready:     { dot: 'bg-emerald-500',                   text: 'text-emerald-600', bg: 'bg-emerald-50', label: 'Ready' },
+  deploying: { dot: 'bg-[#1e3a7a] animate-pulse',       text: 'text-[#1e3a7a]',  bg: 'bg-[#edf3fb]',  label: 'Deploying' },
+  deployed:  { dot: 'bg-gray-400',                      text: 'text-gray-500',    bg: 'bg-gray-100',   label: 'Approved' },
+  failed:    { dot: 'bg-red-500',                       text: 'text-red-600',     bg: 'bg-red-50',     label: 'Failed' },
 };
 
 export default function DashboardPage() {
@@ -40,9 +40,9 @@ export default function DashboardPage() {
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         {[
           { label: 'Total Projects', value: m?.projects.total ?? '—', icon: Server, color: '#1e3a7a', bg: 'bg-[#edf3fb]' },
-          { label: 'Deployed', value: m?.projects.deployed ?? '—', icon: Rocket, color: '#059669', bg: 'bg-emerald-50' },
+          { label: 'Plan approved', value: m?.projects.deployed ?? '—', icon: Rocket, color: '#c9692a', bg: 'bg-[#fdf3eb]' },
           { label: 'Failed', value: m?.projects.failed ?? '—', icon: Activity, color: '#ef4444', bg: 'bg-red-50' },
-          { label: 'Deployments (success)', value: m?.deployments.success ?? '—', icon: GitBranch, color: '#c9692a', bg: 'bg-[#fdf3eb]' },
+          { label: 'Deployments', value: m?.deployments.total ?? '—', icon: GitBranch, color: '#c9692a', bg: 'bg-[#fdf3eb]' },
         ].map((s) => {
           const I = s.icon;
           return (
@@ -62,7 +62,7 @@ export default function DashboardPage() {
           : <div className="divide-y divide-gray-50">
               {recent.map((p) => {
                 const cfg = sc[p.status] || sc.pending;
-                const det = p.detailed_analysis?.summary;
+                const det = p.deployment_plan?.analysis?.static?.summary;
                 return (
                   <div key={p.id} className="flex items-center gap-4 px-5 py-3 hover:bg-gray-50 transition-colors">
                     <div className="w-8 h-8 rounded-lg bg-[#edf3fb] flex items-center justify-center flex-shrink-0"><GitBranch size={14} className="text-[#1e3a7a]" /></div>

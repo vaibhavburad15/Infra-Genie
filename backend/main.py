@@ -33,7 +33,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, delete
 from sqlalchemy import func as sqlfunc
 from jose import JWTError, jwt
 from passlib.context import CryptContext
@@ -536,6 +536,9 @@ async def delete_project(project_id,
     p = res.scalar_one_or_none()
     if not p:
         raise HTTPException(404, "Project not found")
+    # Delete reports first (they reference deployments via FK; must be cleared
+    # before deployments are deleted to avoid a FK violation).
+    await db.execute(delete(Report).where(Report.project_id == p.id))
     await db.delete(p)
     await db.commit()
     db.add(AuditLog(org_id=org.id, actor_id=current_user.id,

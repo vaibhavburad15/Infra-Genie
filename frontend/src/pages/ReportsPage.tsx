@@ -65,7 +65,7 @@ export default function ReportsPage() {
             </div>
             <div>
               <h3 className="text-gray-800 font-bold text-sm">Reports</h3>
-              <p className="text-gray-400 text-xs">Reports are generated automatically after deployments and analysis runs.</p>
+              <p className="text-gray-400 text-xs">Reports will be generated automatically once deployment execution is live.</p>
             </div>
           </div>
           <button onClick={load} className="p-1.5 rounded-lg bg-gray-50 border border-gray-200 text-gray-400 hover:text-[#1e3a7a] cursor-pointer transition-colors">
@@ -103,7 +103,7 @@ export default function ReportsPage() {
               </div>
               <p className="text-gray-800 font-semibold text-sm">No reports yet</p>
               <p className="text-gray-400 text-xs mt-1 max-w-xs">
-                Reports are generated automatically after project analysis and deployments. Analyze a project to get started.
+                Deployment execution is in progress — reports will be generated automatically once provisioning is live.
               </p>
             </div>
           ) : (

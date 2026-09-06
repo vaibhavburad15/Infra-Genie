@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react';
 import {
   Rocket, CheckCircle2, XCircle, Clock, Loader, ChevronRight,
-  AlertTriangle, RefreshCw,
+  AlertTriangle, RefreshCw, Users, Hourglass,
 } from 'lucide-react';
-import { listProjects, listDeployments, approveDeployment, timeAgo, parseDate, type Project } from '@/api';
+import { listProjects, listDeployments, approveDeployment, timeAgo, parseDate, ForbiddenError, type Project } from '@/api';
 
 interface Deployment {
   id: string;
@@ -18,12 +18,24 @@ interface Deployment {
   created_at: string;
 }
 
+// Only statuses the API will actually send now
 const statusBadge: Record<string, string> = {
-  success:           'bg-emerald-50 text-emerald-600 border-emerald-200',
-  running:           'bg-[#fdf3eb] text-[#c9692a] border-[#f0bc98]',
+  awaiting_approval: 'bg-[#edf3fb] text-[#1e3a7a] border-[#a8c1ea]',
+  approved:          'bg-[#edf3fb] text-[#1e3a7a] border-[#a8c1ea]',
   failed:            'bg-red-50 text-red-600 border-red-200',
   pending:           'bg-gray-100 text-gray-500 border-gray-200',
-  awaiting_approval: 'bg-[#edf3fb] text-[#1e3a7a] border-[#a8c1ea]',
+  // legacy rows in DB — keep them readable
+  running:           'bg-gray-100 text-gray-500 border-gray-200',
+  success:           'bg-gray-100 text-gray-500 border-gray-200',
+};
+
+const statusLabel: Record<string, string> = {
+  awaiting_approval: 'awaiting approval',
+  approved:          'approved',
+  failed:            'failed',
+  pending:           'pending',
+  running:           'legacy: running',
+  success:           'legacy: success',
 };
 
 const envColors: Record<string, string> = {
@@ -49,7 +61,6 @@ export default function DeploymentsPage() {
       ps.forEach((p) => { map[p.id] = p.name; });
       setProjectMap(map);
 
-      // Fetch deployments for all projects
       const all: Deployment[] = [];
       await Promise.all(
         ps.map(async (p) => {
@@ -57,15 +68,18 @@ export default function DeploymentsPage() {
             const deps = await listDeployments(p.id) as Deployment[];
             all.push(...deps);
           } catch {
-            // Project may have no deployments
+            // project may have no deployments
           }
         })
       );
-      // Sort by created_at descending
       all.sort((a, b) => parseDate(b.created_at).getTime() - parseDate(a.created_at).getTime());
       setDeployments(all);
     } catch (e: any) {
-      setError(e.message || 'Failed to load deployments');
+      if (e instanceof ForbiddenError) {
+        setError('__no_org__');
+      } else {
+        setError(e.message || 'Failed to load deployments');
+      }
     } finally {
       setLoading(false);
     }
@@ -76,30 +90,34 @@ export default function DeploymentsPage() {
   const handleApprove = async (id: string, approved: boolean) => {
     try {
       const updated = await approveDeployment(id, approved) as Deployment;
+      // API now returns awaiting_approval (not running) after approval —
+      // just update the row in-place; no polling needed.
       setDeployments((prev) => prev.map((d) => (d.id === id ? updated : d)));
     } catch (e: any) {
       alert(e.message || 'Failed to update deployment');
     }
   };
 
-  const successCount = deployments.filter((d) => d.status === 'success').length;
-  const runningCount = deployments.filter((d) => d.status === 'running').length;
-  const failedCount  = deployments.filter((d) => d.status === 'failed').length;
+  // Stats reflect the actual states that matter now
+  const approvedCount       = deployments.filter((d) => d.status === 'awaiting_approval' || d.status === 'approved').length;
+  const failedCount         = deployments.filter((d) => d.status === 'failed').length;
+  const pendingApprovalCount = deployments.filter((d) => d.status === 'awaiting_approval').length;
 
   return (
     <div className="p-6 space-y-4 overflow-y-auto h-full bg-[#f4f6fa]">
+      {/* Stat cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         {[
-          { label: 'Total',       value: String(deployments.length), icon: Rocket,       color: '#1e3a7a', bg: 'bg-[#edf3fb]', spin: false },
-          { label: 'Successful',  value: String(successCount),       icon: CheckCircle2, color: '#059669', bg: 'bg-emerald-50', spin: false },
-          { label: 'In Progress', value: String(runningCount),        icon: Loader,       color: '#c9692a', bg: 'bg-[#fdf3eb]', spin: true },
-          { label: 'Failed',      value: String(failedCount),         icon: XCircle,      color: '#ef4444', bg: 'bg-red-50',     spin: false },
+          { label: 'Total',              value: String(deployments.length),   icon: Rocket,    color: '#1e3a7a', bg: '#edf3fb', spin: false },
+          { label: 'Awaiting approval',  value: String(pendingApprovalCount), icon: Clock,     color: '#1e3a7a', bg: '#edf3fb', spin: false },
+          { label: 'Approved',           value: String(approvedCount),        icon: Hourglass, color: '#c9692a', bg: '#fdf3eb', spin: false },
+          { label: 'Failed / rejected',  value: String(failedCount),          icon: XCircle,   color: '#ef4444', bg: '#fef2f2', spin: false },
         ].map((s) => {
           const Icon = s.icon;
           return (
             <div key={s.label} className="bg-white rounded-2xl p-4 border border-gray-100 flex items-center gap-3">
-              <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${s.bg}`} style={{ color: s.color }}>
-                <Icon size={18} className={s.spin ? 'animate-spin' : ''} />
+              <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ backgroundColor: s.bg }}>
+                <Icon size={18} style={{ color: s.color }} className={s.spin ? 'animate-spin' : ''} />
               </div>
               <div>
                 <p className="text-gray-800 text-xl font-bold">{s.value}</p>
@@ -125,11 +143,23 @@ export default function DeploymentsPage() {
       )}
 
       {error && !loading && (
-        <div className="flex items-center gap-3 px-4 py-3 rounded-xl bg-red-50 border border-red-200">
-          <AlertTriangle size={16} className="text-red-500 flex-shrink-0" />
-          <p className="text-red-600 text-sm">{error}</p>
-          <button onClick={load} className="ml-auto text-xs text-red-500 hover:underline cursor-pointer">Retry</button>
-        </div>
+        error === '__no_org__' ? (
+          <div className="flex flex-col items-center justify-center py-20 text-center">
+            <div className="w-16 h-16 rounded-2xl bg-[#edf3fb] flex items-center justify-center mb-4">
+              <Users size={28} className="text-[#1e3a7a]" />
+            </div>
+            <p className="text-gray-800 font-semibold text-sm">No organization yet</p>
+            <p className="text-gray-500 text-xs mt-2 max-w-xs leading-relaxed">
+              You don't belong to any organization yet. Ask an org owner to invite you, or create an organization in Settings.
+            </p>
+          </div>
+        ) : (
+          <div className="flex items-center gap-3 px-4 py-3 rounded-xl bg-red-50 border border-red-200">
+            <AlertTriangle size={16} className="text-red-500 flex-shrink-0" />
+            <p className="text-red-600 text-sm">{error}</p>
+            <button onClick={load} className="ml-auto text-xs text-red-500 hover:underline cursor-pointer">Retry</button>
+          </div>
+        )
       )}
 
       {!loading && !error && deployments.length === 0 && (
@@ -148,6 +178,7 @@ export default function DeploymentsPage() {
 
       {!loading && !error && deployments.map((dep) => (
         <div key={dep.id} className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
+          {/* Card header */}
           <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100 flex-wrap gap-3">
             <div className="flex items-center gap-3">
               <div className="w-9 h-9 rounded-xl bg-[#edf3fb] flex items-center justify-center flex-shrink-0">
@@ -163,7 +194,7 @@ export default function DeploymentsPage() {
                 {dep.environment}
               </span>
               <span className={`px-2 py-0.5 rounded-full text-xs font-medium border ${statusBadge[dep.status] || statusBadge.pending}`}>
-                {dep.status.replace('_', ' ')}
+                {statusLabel[dep.status] ?? dep.status.replace(/_/g, ' ')}
               </span>
               <span className="text-gray-400 text-xs flex items-center gap-1">
                 <Clock size={11} />{timeAgo(dep.created_at)}
@@ -171,6 +202,7 @@ export default function DeploymentsPage() {
             </div>
           </div>
 
+          {/* Card body */}
           <div className="px-5 py-4">
             <div className="grid grid-cols-3 gap-4 text-xs">
               <div>
@@ -187,7 +219,8 @@ export default function DeploymentsPage() {
               </div>
             </div>
 
-            {dep.status === 'awaiting_approval' && (
+            {/* Awaiting approval — show approve / reject buttons */}
+            {dep.status === 'awaiting_approval' && !dep.approved_at && (
               <div className="mt-4 flex items-center gap-3">
                 <div className="flex-1 px-3 py-2 rounded-xl bg-[#edf3fb] border border-[#a8c1ea] flex items-center gap-2">
                   <Clock size={13} className="text-[#1e3a7a]" />
@@ -208,17 +241,37 @@ export default function DeploymentsPage() {
               </div>
             )}
 
-            {dep.status === 'running' && (
-              <div className="mt-4 flex items-center gap-2 px-3 py-2 rounded-xl bg-[#fdf3eb] border border-[#f0bc98]">
-                <Loader size={12} className="text-[#c9692a] animate-spin" />
-                <p className="text-[#c9692a] text-xs">Deployment in progress…</p>
+            {/* After approval — provisioning coming soon banner */}
+            {dep.status === 'awaiting_approval' && dep.approved_at && (
+              <div className="mt-4 flex items-start gap-3 px-4 py-3 rounded-xl bg-[#edf3fb] border border-[#a8c1ea]">
+                <Hourglass size={14} className="text-[#1e3a7a] mt-0.5 flex-shrink-0" />
+                <div>
+                  <p className="text-[#1e3a7a] text-xs font-semibold">Deployment approved.</p>
+                  <p className="text-[#1e3a7a]/70 text-xs mt-0.5">
+                    Actual provisioning is coming soon — we're actively building it.
+                  </p>
+                </div>
               </div>
             )}
 
+            {/* Rejected / failed */}
             {dep.status === 'failed' && (
               <div className="mt-4 flex items-center gap-2 px-3 py-2 rounded-xl bg-red-50 border border-red-200">
                 <XCircle size={12} className="text-red-500" />
-                <p className="text-red-600 text-xs">Deployment failed. Check agent logs for details.</p>
+                <p className="text-red-600 text-xs">Deployment rejected or failed. Check agent logs for details.</p>
+              </div>
+            )}
+
+            {/* Legacy rows that have running/success status from before the flow change */}
+            {(dep.status === 'running' || dep.status === 'success') && (
+              <div className="mt-4 flex items-start gap-3 px-4 py-3 rounded-xl bg-gray-50 border border-gray-200">
+                <Hourglass size={14} className="text-gray-400 mt-0.5 flex-shrink-0" />
+                <div>
+                  <p className="text-gray-600 text-xs font-semibold">Legacy deployment record.</p>
+                  <p className="text-gray-400 text-xs mt-0.5">
+                    Actual provisioning is coming soon — we're actively building it.
+                  </p>
+                </div>
               </div>
             )}
 

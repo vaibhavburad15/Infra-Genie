@@ -85,9 +85,9 @@ export default function Page() {
               {projects.length === 0 ? (
                 <p className="px-5 py-10 text-center text-gray-400 text-sm">No projects yet — create one and run analysis.</p>
               ) : projects.slice(0, 12).map((p) => {
-                const det = p.detailed_analysis?.summary;
-                const ci = p.detailed_analysis?.ci_cd;
-                const container = p.detailed_analysis?.containerization;
+                const det = p.deployment_plan?.analysis?.static;
+                const ci = det?.ci_cd;
+                const container = det?.containerization;
                 return (
                   <div key={p.id} className="flex items-center gap-3 px-5 py-3">
                     <div className="w-8 h-8 rounded-lg bg-[#edf3fb] flex items-center justify-center flex-shrink-0">
@@ -96,10 +96,10 @@ export default function Page() {
                     <div className="flex-1 min-w-0">
                       <p className="text-gray-800 text-sm font-medium truncate">{p.name}</p>
                       <p className="text-gray-400 text-xs truncate">
-                        {det?.primary_language ?? '—'} / {det?.primary_framework ?? '—'}
+                        {det?.summary?.primary_language ?? '—'} / {det?.summary?.primary_framework ?? '—'}
                         {container?.has_dockerfile && ' · 🐳 Docker'}
                         {ci?.present && ' · ⚙️ CI'}
-                        {p.detailed_analysis?.has_database_hint && ' · 💾 DB'}
+                        {det?.has_database_hint && ' · 💾 DB'}
                       </p>
                     </div>
                     <span className="text-[10px] uppercase tracking-wide px-2 py-0.5 rounded-full bg-gray-100 text-gray-500 font-medium">{p.status}</span>

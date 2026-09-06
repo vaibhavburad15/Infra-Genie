@@ -8,6 +8,15 @@ function getAuthHeaders(): Record<string, string> {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
+/** Thrown when the API returns 403 — usually means the user has no org membership. */
+export class ForbiddenError extends Error {
+  readonly status = 403;
+  constructor(message: string) {
+    super(message);
+    this.name = 'ForbiddenError';
+  }
+}
+
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const headers = {
     ...getAuthHeaders(),
@@ -40,6 +49,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
       message = (await res.text().catch(() => '')) || fallback;
     }
 
+    if (res.status === 403) throw new ForbiddenError(message);
     throw new Error(message);
   }
   return res.json();
@@ -47,7 +57,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 
 // ── Types ─────────────────────────────────────────────────────────────────
 
-export type UserRole = 'user' | 'developer' | 'devops_engineer' | 'admin';
+export type UserRole = 'user' | 'organization' | 'developer' | 'devops_engineer' | 'admin';
 
 export interface User {
   id: string;
@@ -101,6 +111,32 @@ export interface EmailOtpVerifyResponse {
   message: string;
 }
 
+// Mirrors the `StaticAnalysis` shape embedded inside deployment_plan.analysis.static
+export interface StaticAnalysisData {
+  summary: {
+    primary_language?: string;
+    primary_framework?: string;
+    package_manager?: string;
+    total_files?: number;
+    source_files?: number;
+    test_files?: number;
+    doc_files?: number;
+    total_loc?: number;
+  };
+  languages: Array<{ name: string; files: number; loc: number }>;
+  frameworks: Array<{ name: string; version?: string }>;
+  build_tools: Array<{ name: string; version?: string }>;
+  tests: Array<{ name: string; version?: string }>;
+  linters_formatters: Array<{ name: string; version?: string }>;
+  databases_orms: Array<{ name: string; version?: string }>;
+  cloud_sdks: Array<{ name: string; version?: string }>;
+  entry_points: string[];
+  environment_variables_hint: string[];
+  containerization: { has_dockerfile: boolean; has_docker_compose: boolean; docker_services?: string[] };
+  ci_cd: { present: boolean; systems?: string[] };
+  has_database_hint?: boolean;
+}
+
 export interface ProjectAnalysis {
   language?: string;
   framework?: string;
@@ -110,7 +146,8 @@ export interface ProjectAnalysis {
   recommended_strategy?: string;
   notes?: string;
   raw?: string;
-  fallback?: boolean;
+  /** Rich static-analysis payload now embedded directly on the analysis object. */
+  static?: StaticAnalysisData;
 }
 
 export interface DiscoveredApp {
@@ -136,30 +173,10 @@ export interface DeploymentPlan {
 
 // Shape of the rich static-analysis result attached to a project after analysis.
 // Mirrors what backend/static_analysis.py emits as `analyze_repo_static()`.
-export interface DetailedAnalysis {
-  summary: {
-    primary_language?: string;
-    primary_framework?: string;
-    package_manager?: string;
-    total_files?: number;
-    source_files?: number;
-    test_files?: number;
-    doc_files?: number;
-    total_loc?: number;
-  };
-  languages: Array<{ name: string; files: number; loc: number }>;
-  frameworks: Array<{ name: string; version?: string }>;
-  build_tools: Array<{ name: string; version?: string }>;
-  tests: Array<{ name: string; version?: string }>;
-  linters_formatters: Array<{ name: string; version?: string }>;
-  databases_orms: Array<{ name: string; version?: string }>;
-  cloud_sdks: Array<{ name: string; version?: string }>;
-  entry_points: string[];
-  environment_variables_hint: string[];
-  containerization: { has_dockerfile: boolean; has_docker_compose: boolean; docker_services?: string[] };
-  ci_cd: { present: boolean; systems?: string[] };
-  has_database_hint?: boolean;
-}
+// Kept for backwards compatibility — new code should read from
+// deployment_plan.analysis.static instead.
+/** @deprecated Use `deployment_plan.analysis.static` (StaticAnalysisData) instead. */
+export type DetailedAnalysis = StaticAnalysisData;
 
 export interface Project {
   id: string;
@@ -183,6 +200,7 @@ export async function register(payload: {
   username: string;
   password: string;
   role: UserRole;
+  org_name?: string;
 }): Promise<TokenResponse> {
   const data = await request<TokenResponse>('/auth/register', {
     method: 'POST',
@@ -543,7 +561,7 @@ export async function switchOrg(orgId: string): Promise<void> {
 }
 
 export async function getMySubscription(): Promise<Subscription> {
-  return request<Subscription>('/billing/subscription');
+  return request<Subscription>('/subscription/me');
 }
 
 export async function getAuditLog(limit = 50): Promise<AuditLogEntry[]> {

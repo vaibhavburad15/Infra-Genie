@@ -4,13 +4,13 @@ import {
   CheckCircle2, AlertTriangle, Loader, X, RefreshCw, ChevronRight,
   Code, Box, Cloud, GitBranch, Shield, Activity, DollarSign,
   Cpu, Database, Layers, FileCode, ExternalLink, Terminal,
-  Sparkles,
+  Sparkles, Users,
   type LucideIcon,
 } from 'lucide-react';
 import {
   listProjects, createProject, deleteProject, analyzeProject, getProject,
   streamProjectLogs, getProjectLogs, listDeployments, approveDeployment,
-  uploadProjectFile, timeAgo, parseDate,
+  uploadProjectFile, timeAgo, parseDate, ForbiddenError,
   type Project, type DeploymentPlan, type LogEntry,
 } from '@/api';
 
@@ -37,8 +37,8 @@ const statusConfig: Record<string, { dot: string; text: string; bg: string; labe
   pending:   { dot: 'bg-gray-400',                      text: 'text-gray-500',    bg: 'bg-gray-100',   label: 'Pending' },
   analyzing: { dot: 'bg-[#c9692a] animate-pulse',       text: 'text-[#c9692a]',  bg: 'bg-[#fdf3eb]',  label: 'Analyzing' },
   ready:     { dot: 'bg-emerald-500',                   text: 'text-emerald-600', bg: 'bg-emerald-50', label: 'Ready' },
-  deploying: { dot: 'bg-[#1e3a7a] animate-pulse',       text: 'text-[#1e3a7a]',  bg: 'bg-[#edf3fb]',  label: 'Deploying' },
-  deployed:  { dot: 'bg-emerald-500',                   text: 'text-emerald-600', bg: 'bg-emerald-50', label: 'Deployed' },
+  deploying: { dot: 'bg-gray-400',                      text: 'text-gray-500',    bg: 'bg-gray-100',   label: 'Approved' },
+  deployed:  { dot: 'bg-gray-400',                      text: 'text-gray-500',    bg: 'bg-gray-100',   label: 'Approved' },
   failed:    { dot: 'bg-red-500',                       text: 'text-red-600',     bg: 'bg-red-50',     label: 'Failed' },
 };
 
@@ -331,17 +331,14 @@ function ProjectDrawer({ project, onClose, onRefresh }: {
     if (!plan && project.status === 'failed') {
       const errorLogs = (project.logs || []).filter((l) => l.level === 'error');
       const lastError = errorLogs[errorLogs.length - 1];
-      const isLlmIssue = !!lastError && /LLM/i.test(lastError.message);
       return (
         <div className="flex flex-col items-center justify-center py-12 text-center px-4">
           <div className="w-14 h-14 rounded-2xl bg-red-50 flex items-center justify-center mb-4">
             <AlertTriangle size={24} className="text-red-500" />
           </div>
-          <p className="text-gray-800 text-sm font-semibold">
-            {isLlmIssue ? 'LLM is not working' : 'Analysis failed'}
-          </p>
+          <p className="text-gray-800 text-sm font-semibold">Analysis failed — LLM unreachable</p>
           <p className="text-gray-400 text-xs mt-1 max-w-sm">
-            {lastError?.message || 'Check that your backend worker is running and the LLM service is reachable.'}
+            {lastError?.message || 'The LLM service could not be reached. Check that your backend worker is running and the model endpoint is configured correctly.'}
           </p>
           {errorLogs.length > 0 && (
             <div className="mt-4 w-full max-w-md text-left bg-[#0d0d1a] rounded-lg p-3 font-mono text-[11px] text-red-400 space-y-1 max-h-40 overflow-y-auto">
@@ -364,13 +361,15 @@ function ProjectDrawer({ project, onClose, onRefresh }: {
 
     // ── Tab: Analysis ──
     if (activeTab === 'analysis') {
-      const det = project.detailed_analysis;
+      // Prefer analysis.static (new shape); fall back to project.detailed_analysis for
+      // old DB rows that were analysed before the schema change.
+      const det = analysis?.static ?? project.detailed_analysis ?? null;
       const summary = det?.summary;
       return (
         <div className="space-y-4">
           {det && summary ? (
             <>
-              {/* Project overview card (deterministic — runs even when LLM is down) */}
+              {/* Project overview card */}
               <div className="bg-gradient-to-r from-[#1e3a7a] to-[#24478f] rounded-2xl p-4 text-white">
                 <div className="flex items-center justify-between mb-2">
                   <p className="text-xs font-semibold uppercase tracking-wider opacity-70">Project Overview</p>
@@ -412,12 +411,12 @@ function ProjectDrawer({ project, onClose, onRefresh }: {
               )}
               {/* Tooling grid */}
               {[
-                { title: 'Frameworks',  items: det.frameworks,  icon: Layers },
-                { title: 'Build tools', items: det.build_tools,  icon: Box },
-                { title: 'Testing',    items: det.tests,        icon: CheckCircle2 },
-                { title: 'Linters',    items: det.linters_formatters, icon: Code },
-                { title: 'Databases / ORMs', items: det.databases_orms, icon: Database },
-                { title: 'Cloud SDKs', items: det.cloud_sdks,   icon: Cloud },
+                { title: 'Frameworks',       items: det.frameworks,          icon: Layers },
+                { title: 'Build tools',      items: det.build_tools,         icon: Box },
+                { title: 'Testing',          items: det.tests,               icon: CheckCircle2 },
+                { title: 'Linters',          items: det.linters_formatters,  icon: Code },
+                { title: 'Databases / ORMs', items: det.databases_orms,      icon: Database },
+                { title: 'Cloud SDKs',       items: det.cloud_sdks,          icon: Cloud },
               ].filter((g) => g.items && g.items.length > 0).map((g) => {
                 const Ico = g.icon;
                 return (
@@ -455,14 +454,13 @@ function ProjectDrawer({ project, onClose, onRefresh }: {
                   </div>
                 </div>
               )}
-              {/* LLM synthesis (rendered below the deterministic block; allowed to be empty / "fallback") */}
-              {analysis && (
+              {/* AI commentary — only when notes are present */}
+              {analysis?.notes && (
                 <div className="bg-[#fdf3eb] border border-[#f0bc98] rounded-2xl p-3">
                   <p className="text-[#c9692a] text-[10px] uppercase font-semibold tracking-wider mb-1.5 flex items-center gap-1.5">
                     <Sparkles size={11} /> AI Commentary
-                    {analysis.fallback && <span className="text-[9px] px-1.5 py-0.5 rounded bg-[#c9692a]/15 font-bold">STATIC FALLBACK</span>}
                   </p>
-                  <p className="text-gray-700 text-xs leading-relaxed">{analysis.notes || analysis.raw || 'No additional commentary.'}</p>
+                  <p className="text-gray-700 text-xs leading-relaxed">{analysis.notes}</p>
                 </div>
               )}
             </>
@@ -652,7 +650,7 @@ function ProjectDrawer({ project, onClose, onRefresh }: {
                       setDeploying(true);
                       setDeployMsg('');
                       await approveDeployment(pendingDeploymentId, true);
-                      setDeployMsg('Deployment approved & started. Track live progress on the Deployments page.');
+                      setDeployMsg('Deployment approved. Actual provisioning is coming soon — we\'re actively building it.');
                       const u = await getProject(project.id).catch(() => null);
                       if (u) onRefresh(u);
                     } catch (e: any) {
@@ -724,7 +722,11 @@ export default function ProjectsPage() {
       const data = await listProjects();
       setProjects(data);
     } catch (e: any) {
-      setError(e.message || 'Failed to load projects');
+      if (e instanceof ForbiddenError) {
+        setError('__no_org__');
+      } else {
+        setError(e.message || 'Failed to load projects');
+      }
     } finally {
       setLoading(false);
     }
@@ -850,11 +852,23 @@ export default function ProjectsPage() {
 
       {/* Error */}
       {error && !loading && (
-        <div className="flex items-center gap-3 px-4 py-3 rounded-xl bg-red-50 border border-red-200">
-          <AlertTriangle size={16} className="text-red-500 flex-shrink-0" />
-          <p className="text-red-600 text-sm">{error}</p>
-          <button onClick={load} className="ml-auto text-xs text-red-500 hover:underline cursor-pointer">Retry</button>
-        </div>
+        error === '__no_org__' ? (
+          <div className="flex flex-col items-center justify-center py-20 text-center">
+            <div className="w-16 h-16 rounded-2xl bg-[#edf3fb] flex items-center justify-center mb-4">
+              <Users size={28} className="text-[#1e3a7a]" />
+            </div>
+            <p className="text-gray-800 font-semibold text-sm">No organization yet</p>
+            <p className="text-gray-500 text-xs mt-2 max-w-xs leading-relaxed">
+              You don't belong to any organization yet. Ask an org owner to invite you, or create an organization in Settings.
+            </p>
+          </div>
+        ) : (
+          <div className="flex items-center gap-3 px-4 py-3 rounded-xl bg-red-50 border border-red-200">
+            <AlertTriangle size={16} className="text-red-500 flex-shrink-0" />
+            <p className="text-red-600 text-sm">{error}</p>
+            <button onClick={load} className="ml-auto text-xs text-red-500 hover:underline cursor-pointer">Retry</button>
+          </div>
+        )
       )}
 
       {/* Empty */}

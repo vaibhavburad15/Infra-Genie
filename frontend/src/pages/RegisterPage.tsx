@@ -1,25 +1,24 @@
 // src/pages/RegisterPage.tsx
 import { useState, FormEvent } from 'react';
 import { useAuth } from '@/context/useAuth';
-import type { UserRole } from '@/api';
 import * as api from '@/api';
 
 interface RegisterPageProps {
   onSwitchToLogin: () => void;
 }
 
-const ADMIN_CONTACT_MESSAGE = 'Admin accounts cannot be created here. Contact Vaibhav or Raj for admin access.';
+type SignupRole = 'user' | 'organization';
 
 export default function RegisterPage({ onSwitchToLogin }: RegisterPageProps) {
   const { register } = useAuth();
   const [email, setEmail] = useState('');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
-  const [role, setRole] = useState<UserRole>('user');
+  const [role, setRole] = useState<SignupRole>('user');
+  const [orgName, setOrgName] = useState('');
   const [otp, setOtp] = useState('');
   const [otpMessage, setOtpMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [showAdminNotice, setShowAdminNotice] = useState(false);
   const [isOtpSent, setIsOtpSent] = useState(false);
   const [isEmailVerified, setIsEmailVerified] = useState(false);
   const [isSendingOtp, setIsSendingOtp] = useState(false);
@@ -31,7 +30,6 @@ export default function RegisterPage({ onSwitchToLogin }: RegisterPageProps) {
       setError('Enter your email first.');
       return;
     }
-
     setError(null);
     setOtpMessage(null);
     setIsSendingOtp(true);
@@ -53,15 +51,8 @@ export default function RegisterPage({ onSwitchToLogin }: RegisterPageProps) {
   }
 
   async function handleVerifyOtp() {
-    if (!email.trim()) {
-      setError('Enter your email first.');
-      return;
-    }
-    if (!otp.trim()) {
-      setError('Enter the OTP sent to your email.');
-      return;
-    }
-
+    if (!email.trim()) { setError('Enter your email first.'); return; }
+    if (!otp.trim()) { setError('Enter the OTP sent to your email.'); return; }
     setError(null);
     setOtpMessage(null);
     setIsVerifyingOtp(true);
@@ -81,11 +72,6 @@ export default function RegisterPage({ onSwitchToLogin }: RegisterPageProps) {
     e.preventDefault();
     setError(null);
 
-    if (role === 'admin') {
-      setShowAdminNotice(true);
-      return;
-    }
-
     if (!isEmailVerified) {
       setError('Verify your email OTP before creating an account.');
       return;
@@ -93,7 +79,13 @@ export default function RegisterPage({ onSwitchToLogin }: RegisterPageProps) {
 
     setIsSubmitting(true);
     try {
-      await register(email, username, password, role);
+      await register(
+        email,
+        username,
+        password,
+        role,
+        role === 'organization' ? (orgName.trim() || undefined) : undefined,
+      );
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not create account.');
     } finally {
@@ -116,6 +108,7 @@ export default function RegisterPage({ onSwitchToLogin }: RegisterPageProps) {
           <p className="mb-6 text-sm text-slate-500">Get started with Infra Genie.</p>
 
           <form onSubmit={handleSubmit} className="space-y-4">
+            {/* Username */}
             <div>
               <label className="mb-1 block text-sm font-medium text-slate-700">Username</label>
               <input
@@ -128,6 +121,7 @@ export default function RegisterPage({ onSwitchToLogin }: RegisterPageProps) {
               />
             </div>
 
+            {/* Email + OTP request */}
             <div>
               <label className="mb-1 block text-sm font-medium text-slate-700">Email</label>
               <div className="flex gap-2">
@@ -154,6 +148,7 @@ export default function RegisterPage({ onSwitchToLogin }: RegisterPageProps) {
               </div>
             </div>
 
+            {/* OTP verification */}
             {isOtpSent && (
               <div>
                 <label className="mb-1 block text-sm font-medium text-slate-700">Email OTP</label>
@@ -173,10 +168,10 @@ export default function RegisterPage({ onSwitchToLogin }: RegisterPageProps) {
                   <button
                     type="button"
                     onClick={handleVerifyOtp}
-                    disabled={isVerifyingOtp}
+                    disabled={isVerifyingOtp || isEmailVerified}
                     className="shrink-0 rounded-lg bg-slate-900 px-3 py-2 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:opacity-60"
                   >
-                    {isVerifyingOtp ? 'Verifying…' : isEmailVerified ? 'Verified' : 'Verify'}
+                    {isVerifyingOtp ? 'Verifying…' : isEmailVerified ? '✓ Verified' : 'Verify'}
                   </button>
                 </div>
               </div>
@@ -186,27 +181,40 @@ export default function RegisterPage({ onSwitchToLogin }: RegisterPageProps) {
               <p className="rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-600">{otpMessage}</p>
             )}
 
+            {/* Role — only Individual or Organization */}
             <div>
-              <label className="mb-1 block text-sm font-medium text-slate-700">Role</label>
+              <label className="mb-1 block text-sm font-medium text-slate-700">Account type</label>
               <select
                 required
                 value={role}
-                onChange={(e) => {
-                  const selectedRole = e.target.value as UserRole;
-                  setRole(selectedRole);
-                  if (selectedRole === 'admin') {
-                    setShowAdminNotice(true);
-                  }
-                }}
+                onChange={(e) => setRole(e.target.value as SignupRole)}
                 className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none focus:border-[#1e2a5e] focus:ring-1 focus:ring-[#1e2a5e]"
               >
-                <option value="user">User</option>
-                <option value="developer">Developer</option>
-                <option value="devops_engineer">DevOps Engineer</option>
-                <option value="admin">Admin</option>
+                <option value="user">Individual</option>
+                <option value="organization">Organization</option>
               </select>
             </div>
 
+            {/* Org name — shown only for organization role */}
+            {role === 'organization' && (
+              <div>
+                <label className="mb-1 block text-sm font-medium text-slate-700">
+                  Organization name <span className="text-slate-400 font-normal">(optional)</span>
+                </label>
+                <input
+                  type="text"
+                  value={orgName}
+                  onChange={(e) => setOrgName(e.target.value)}
+                  className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-[#1e2a5e] focus:ring-1 focus:ring-[#1e2a5e]"
+                  placeholder="Acme Corp"
+                />
+                <p className="mt-1 text-xs text-slate-400">
+                  Defaults to your username if left blank.
+                </p>
+              </div>
+            )}
+
+            {/* Password */}
             <div>
               <label className="mb-1 block text-sm font-medium text-slate-700">Password</label>
               <input
@@ -226,16 +234,14 @@ export default function RegisterPage({ onSwitchToLogin }: RegisterPageProps) {
 
             <button
               type="submit"
-              disabled={isSubmitting || role === 'admin' || !isEmailVerified}
+              disabled={isSubmitting || !isEmailVerified}
               className="w-full rounded-lg bg-[#1e2a5e] py-2.5 text-sm font-semibold text-white transition hover:bg-[#16204a] disabled:opacity-60"
             >
               {isSubmitting
-                ? 'Creating account...'
-                : role === 'admin'
-                  ? 'Admin sign-up unavailable'
-                  : !isEmailVerified
-                    ? 'Verify email OTP first'
-                    : 'Create account'}
+                ? 'Creating account…'
+                : !isEmailVerified
+                  ? 'Verify email OTP first'
+                  : 'Create account'}
             </button>
           </form>
 
@@ -247,32 +253,6 @@ export default function RegisterPage({ onSwitchToLogin }: RegisterPageProps) {
           </p>
         </div>
       </div>
-
-      {showAdminNotice && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 px-4"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="admin-role-title"
-        >
-          <div className="w-full max-w-xs rounded-2xl bg-white p-6 shadow-xl">
-            <h3 id="admin-role-title" className="text-base font-semibold text-slate-900">
-              Admin access restricted
-            </h3>
-            <p className="mt-2 text-sm leading-6 text-slate-500">{ADMIN_CONTACT_MESSAGE}</p>
-            <button
-              type="button"
-              onClick={() => {
-                setRole('user');
-                setShowAdminNotice(false);
-              }}
-              className="mt-5 w-full rounded-lg bg-[#1e2a5e] py-2.5 text-sm font-semibold text-white transition hover:bg-[#16204a]"
-            >
-              Got it
-            </button>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

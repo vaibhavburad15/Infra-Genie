@@ -58,7 +58,7 @@ export default function MonitoringPage() {
                     <div className="w-8 h-8 rounded-lg bg-[#edf3fb] flex items-center justify-center"><Server size={14} className="text-[#1e3a7a]" /></div>
                     <div className="flex-1 min-w-0">
                       <p className="text-gray-800 text-sm font-medium truncate">{p.name}</p>
-                      <p className="text-gray-400 text-xs">{p.detailed_analysis?.summary?.primary_language || 'pending'} / {p.detailed_analysis?.summary?.primary_framework || '—'}</p>
+                      <p className="text-gray-400 text-xs">{p.deployment_plan?.analysis?.static?.summary?.primary_language || 'pending'} / {p.deployment_plan?.analysis?.static?.summary?.primary_framework || '—'}</p>
                     </div>
                     <span className="text-[10px] px-2 py-0.5 rounded-full bg-gray-100 text-gray-500 font-medium">{p.status}</span>
                   </div>

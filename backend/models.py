@@ -238,7 +238,7 @@ class Report(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     project_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("projects.id"), nullable=False)
-    deployment_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("deployments.id"), nullable=True)
+    deployment_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("deployments.id", ondelete="SET NULL"), nullable=True)
     report_type: Mapped[Optional[str]] = mapped_column(String(100))
     content: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON, nullable=True)
     insights: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
