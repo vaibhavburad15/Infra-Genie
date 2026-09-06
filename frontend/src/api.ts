@@ -565,5 +565,5 @@ export async function getMySubscription(): Promise<Subscription> {
 }
 
 export async function getAuditLog(limit = 50): Promise<AuditLogEntry[]> {
-  return request<AuditLogEntry[]>(`/audit?limit=${limit}`);
+  return request<AuditLogEntry[]>(`/audit-log?limit=${limit}`);
 }
