@@ -24,7 +24,7 @@ from sqlalchemy.ext.asyncio import (
     AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
-from pydantic import BaseModel, EmailStr, field_serializer
+from pydantic import BaseModel, EmailStr, field_serializer, field_validator
 import enum
 
 from config import settings
@@ -285,7 +285,15 @@ class UserCreate(BaseModel):
     username: str
     password: str
     role: str = "user"
-    org_name: Optional[str] = None  # if present, creates the user as owner of a new org
+    org_name: Optional[str] = None  # only used when role == "organization"
+
+    @field_validator("role")
+    @classmethod
+    def validate_signup_role(cls, v: str) -> str:
+        allowed = {"user", "organization"}
+        if v not in allowed:
+            raise ValueError("role must be 'user' or 'organization'")
+        return v
 
 
 class EmailOtpRequest(BaseModel):
@@ -439,7 +447,16 @@ class MembershipOut(BaseModel):
 
 class MembershipInvite(BaseModel):
     email: EmailStr
-    role: str = "developer"
+    # Allowed roles for invited team members (signup roles are not valid here)
+    role: str = OrgRole.developer.value
+
+    @field_validator("role")
+    @classmethod
+    def validate_invite_role(cls, v: str) -> str:
+        allowed = {OrgRole.admin.value, OrgRole.developer.value, OrgRole.viewer.value}
+        if v not in allowed:
+            raise ValueError(f"role must be one of: {', '.join(sorted(allowed))}")
+        return v
 
 
 class AuditLogOut(BaseModel):
