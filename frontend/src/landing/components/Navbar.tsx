@@ -72,7 +72,15 @@ export default function Navbar({ theme, onToggleTheme }: NavbarProps) {
         </nav>
 
         <div className="hidden items-center gap-4 lg:flex">
-          
+          <button
+            data-testid="desktop-theme-toggle"
+            type="button"
+            onClick={onToggleTheme}
+            className="flex h-10 w-10 items-center justify-center rounded-xl border border-white/10 bg-white/[0.04] text-copper-300 transition-colors hover:border-copper-500/50"
+            aria-label={theme === 'light' ? 'Switch to dark mode' : 'Switch to light mode'}
+          >
+            {theme === 'light' ? <Moon size={17} /> : <Sun size={17} />}
+          </button>
           <a
             data-testid="nav-login-link"
             href={LOGIN_URL}

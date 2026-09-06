@@ -27,13 +27,7 @@ export default function Footer() {
               From source code to production infrastructure — analyzed, generated, deployed and
               monitored by ten specialized AI agents.
             </p>
-            <div
-              data-testid="footer-status-pill"
-              className="mt-6 inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5"
-            >
-              <span className="status-dot h-1.5 w-1.5 rounded-full bg-emerald-400" />
-              <span className="font-mono text-[11px] tracking-wider text-slate-400">ALL AGENTS OPERATIONAL</span>
-            </div>
+           
           </div>
 
           <div className="lg:col-span-3">
