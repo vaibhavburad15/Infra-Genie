@@ -332,6 +332,53 @@ async def cost_agent(state: AgentState) -> dict:
 
 
 async def aggregate_results(state: AgentState) -> dict:
+    static = state.get("source_code_summary") or {}
+    static_summary = static.get("summary", {})
+
+    # Start with whatever the LLM analysis agent produced
+    llm_analysis: dict = dict(state.get("analysis") or {})
+
+    # Merge static analysis fields in — static data fills gaps and adds
+    # structured detail that the LLM analysis object alone doesn't carry.
+    # LLM values are kept when present; static values are added under their
+    # own keys so nothing is silently overwritten.
+    merged_analysis = {
+        # Core identity — prefer LLM interpretation, static as fallback
+        "language": llm_analysis.get("language") or static_summary.get("primary_language", "Unknown"),
+        "framework": llm_analysis.get("framework") or static_summary.get("primary_framework"),
+        "complexity": llm_analysis.get("complexity", "medium"),
+        "recommended_strategy": llm_analysis.get("recommended_strategy", "docker-compose"),
+        "notes": llm_analysis.get("notes", ""),
+        "has_database": llm_analysis.get("has_database",
+                                         bool(static.get("databases_orms"))),
+        "has_frontend": llm_analysis.get("has_frontend", False),
+        # Structured detail straight from static analysis
+        "static": {
+            "summary": static_summary,
+            "languages": static.get("languages", []),
+            "frameworks": static.get("frameworks", []),
+            "build_tools": static.get("build_tools", []),
+            "tests": static.get("tests", []),
+            "linters_formatters": static.get("linters_formatters", []),
+            "databases_orms": static.get("databases_orms", []),
+            "containerization": static.get("containerization", {}),
+            "ci_cd": static.get("ci_cd", {}),
+            "entry_points": static.get("entry_points", []),
+            "environment_variables_hint": static.get("environment_variables_hint", []),
+            "total_files": static_summary.get("total_files"),
+            "total_loc": static_summary.get("total_loc"),
+            "source_files": static_summary.get("source_files"),
+            "test_files": static_summary.get("test_files"),
+            "package_manager": static_summary.get("package_manager"),
+        },
+    }
+
+    _emit(state, "InfraGenie",
+          f"Aggregating results: language={merged_analysis['language']}, "
+          f"framework={merged_analysis['framework']}, "
+          f"strategy={merged_analysis['recommended_strategy']}",
+          "success")
+
     return {"final_artifacts": {
         "docker": state.get("docker_artifacts", ""),
         "terraform": state.get("terraform_artifacts", ""),
@@ -342,8 +389,8 @@ async def aggregate_results(state: AgentState) -> dict:
         "security": state.get("security_config", ""),
         "cost_estimate": state.get("cost_estimate", ""),
         "strategy": state.get("strategy", ""),
-        "analysis": state.get("analysis", {}),
-        "detailed_analysis": state.get("source_code_summary", {}),
+        "analysis": merged_analysis,
+        "detailed_analysis": static,
         "discovered_apps": state.get("discovered_apps", []),
     }}
 

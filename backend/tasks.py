@@ -208,53 +208,6 @@ def _extract_zip(zf_path: Path) -> Path:
     return target
 
 
-# ── Fallback plan (used when the LLM is unreachable) ─────────────────────────
-
-def _fallback_plan_from_static(det: dict[str, Any]) -> dict[str, Any]:
-    """Build a partial deployment plan from static analysis alone when the LLM
-    is unreachable so the project still moves to `ready` instead of `failed`."""
-    primary = det.get("summary", {}).get("primary_language", "Unknown")
-    framework = det.get("summary", {}).get("primary_framework") or "(none detected)"
-    has_db = det.get("has_database_hint", False)
-    has_docker = det.get("has_dockerfile", False)
-    note = (
-        "This plan was assembled by the deterministic static analyzer; the "
-        "LLM-powered specialist agents were not available. Re-run with the "
-        "LLM reachable for richer Docker / Terraform / Kubernetes plans."
-    )
-    return {
-        "analysis": {
-            "language": primary,
-            "framework": framework,
-            "complexity": "medium",
-            "recommended_strategy": (
-                "kubernetes" if has_docker else "docker-compose"
-            ),
-            "notes": note,
-            "fallback": True,
-        },
-        "discovered_apps": [{
-            "name": det.get("summary", {}).get("primary_language", "app"),
-            "type": "backend", "port": 8000,
-            "tech": framework,
-        }],
-        "docker": ("# Dockerfile not generated - LLM unavailable\n"
-                   "# Project DOES have a Dockerfile in repo"
-                   if has_docker else
-                   "# Dockerfile not generated - LLM unavailable"),
-        "terraform": "# Terraform not generated - LLM unavailable",
-        "kubernetes": "# Kubernetes manifests not generated - LLM unavailable",
-        "cicd": "# CI/CD pipeline not generated - LLM unavailable",
-        "architecture": f"Static analysis fallback: {primary} / {framework}, "
-                        f"DB hint: {has_db}.",
-        "monitoring": "# Prometheus / Grafana config not generated - LLM unavailable",
-        "security": "# Security scan not generated - LLM unavailable",
-        "cost_estimate": "# Cost estimate not generated - LLM unavailable",
-        "detailed_analysis": det,
-        "strategy": "kubernetes" if has_docker else "docker-compose",
-    }
-
-
 # ── Agent run stats ───────────────────────────────────────────────────────────
 
 # Maps the agent display name emitted in pipeline logs to the registry id used
@@ -417,14 +370,12 @@ def task_analyze_project(project_id: str) -> None:
                 "LLM is reachable - starting specialist agent pipeline")
         except LLMUnavailableError as e:
             log(LOG_KIND_ERROR, "InfraGenie", "LLM is not working: " + str(e))
-            log(LOG_KIND_INFO, "InfraGenie",
-                "Static analysis already complete and persisted; "
-                "deployment plan will use a deterministic fallback. Retry later.")
-            project.status = ProjectStatus.ready
-            project.deployment_plan = _fallback_plan_from_static(project.detailed_analysis or {})
+            log(LOG_KIND_ERROR, "InfraGenie",
+                "Analysis cannot proceed without LLM. Fix LLM connectivity and retry.")
+            project.status = ProjectStatus.failed
             db.commit()
             _finish_stream(r, project, error="LLM unavailable: " + str(e))
-            persist_audit(db, project, "project.analyze.partial", "project",
+            persist_audit(db, project, "project.analyze.failed", "project",
                           str(project.id), metadata={"reason": "llm_unavailable"})
             return
 
@@ -466,8 +417,9 @@ def task_analyze_project(project_id: str) -> None:
             ))
         except LLMUnavailableError as e:
             log(LOG_KIND_ERROR, "InfraGenie", "Agent pipeline failed: " + str(e))
-            project.status = ProjectStatus.ready
-            project.deployment_plan = _fallback_plan_from_static(project.detailed_analysis or {})
+            log(LOG_KIND_ERROR, "InfraGenie",
+                "Cannot build deployment plan without LLM. Fix LLM connectivity and retry.")
+            project.status = ProjectStatus.failed
             db.commit()
             _finish_stream(r, project, error=str(e))
             return
