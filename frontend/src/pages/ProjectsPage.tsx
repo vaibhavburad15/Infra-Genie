@@ -10,9 +10,26 @@ import {
 import {
   listProjects, createProject, deleteProject, analyzeProject, getProject,
   streamProjectLogs, getProjectLogs, listDeployments, approveDeployment,
-  timeAgo, parseDate,
+  uploadProjectFile, timeAgo, parseDate,
   type Project, type DeploymentPlan, type LogEntry,
 } from '@/api';
+
+// ── Upload constraints ──────────────────────────────────────────────────────
+const MAX_UPLOAD_MB = 150;
+const MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024;
+
+function validateZipFile(file: File): string | null {
+  const isZipExt = file.name.toLowerCase().endsWith('.zip');
+  const isZipMime = ['application/zip', 'application/x-zip-compressed', 'multipart/x-zip']
+    .includes(file.type);
+  if (!isZipExt || (file.type && !isZipMime)) {
+    return 'Only .zip files are supported.';
+  }
+  if (file.size > MAX_UPLOAD_BYTES) {
+    return `File exceeds the ${MAX_UPLOAD_MB}MB limit.`;
+  }
+  return null;
+}
 
 // ── Status config ─────────────────────────────────────────────────────────────
 
@@ -684,6 +701,21 @@ export default function ProjectsPage() {
   const [form, setForm] = useState<NewProjectForm>({
     name: '', description: '', source_type: 'upload', github_url: '',
   });
+  const [uploadFile, setUploadFile] = useState<File | null>(null);
+  const [uploadDragActive, setUploadDragActive] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleFilePicked = (picked: File | null | undefined) => {
+    if (!picked) return;
+    const err = validateZipFile(picked);
+    if (err) {
+      setFormError(err);
+      setUploadFile(null);
+      return;
+    }
+    setFormError('');
+    setUploadFile(picked);
+  };
 
   const load = useCallback(async () => {
     try {
@@ -712,6 +744,9 @@ export default function ProjectsPage() {
     if (form.source_type === 'github' && !form.github_url.trim()) {
       setFormError('GitHub URL is required.'); return;
     }
+    if (form.source_type === 'upload' && !uploadFile) {
+      setFormError('Please select a .zip file to upload.'); return;
+    }
     try {
       setCreating(true);
       setFormError('');
@@ -721,9 +756,23 @@ export default function ProjectsPage() {
         source_type: form.source_type,
         github_url: form.github_url.trim() || undefined,
       });
-      setProjects((prev) => [created, ...prev]);
+      let finalProject = created;
+      if (form.source_type === 'upload' && uploadFile) {
+        try {
+          finalProject = await uploadProjectFile(created.id, uploadFile);
+        } catch (e: any) {
+          // Project record exists but the file failed to attach — surface this
+          // clearly rather than silently leaving an empty project behind.
+          setFormError(e.message || 'Project created, but file upload failed. You can retry from the project detail view.');
+          setProjects((prev) => [created, ...prev]);
+          setCreating(false);
+          return;
+        }
+      }
+      setProjects((prev) => [finalProject, ...prev]);
       setShowModal(false);
       setForm({ name: '', description: '', source_type: 'upload', github_url: '' });
+      setUploadFile(null);
     } catch (e: any) {
       setFormError(e.message || 'Failed to create project');
     } finally {
@@ -964,7 +1013,7 @@ export default function ProjectsPage() {
                   <p className="text-gray-400 text-xs">Add a project to InfraGenie</p>
                 </div>
               </div>
-              <button onClick={() => { setShowModal(false); setFormError(''); }} className="text-gray-400 hover:text-gray-600 cursor-pointer">
+              <button onClick={() => { setShowModal(false); setFormError(''); setUploadFile(null); }} className="text-gray-400 hover:text-gray-600 cursor-pointer">
                 <X size={18} />
               </button>
             </div>
@@ -997,10 +1046,55 @@ export default function ProjectsPage() {
                     className="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-700 placeholder-gray-400 focus:outline-none focus:border-[#1e3a7a]" />
                 </div>
               )}
+              {form.source_type === 'upload' && (
+                <div>
+                  <label className="text-gray-500 text-xs font-medium block mb-1.5">Project ZIP <span className="text-red-500">*</span></label>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept=".zip,application/zip,application/x-zip-compressed"
+                    className="hidden"
+                    onChange={(e) => handleFilePicked(e.target.files?.[0])}
+                  />
+                  <div
+                    onClick={() => fileInputRef.current?.click()}
+                    onDragOver={(e) => { e.preventDefault(); setUploadDragActive(true); }}
+                    onDragLeave={() => setUploadDragActive(false)}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      setUploadDragActive(false);
+                      handleFilePicked(e.dataTransfer.files?.[0]);
+                    }}
+                    className={`w-full rounded-lg border-2 border-dashed px-3 py-5 text-center cursor-pointer transition-colors ${
+                      uploadDragActive ? 'border-[#1e3a7a] bg-[#edf3fb]' : 'border-gray-200 bg-gray-50 hover:border-gray-300'
+                    }`}
+                  >
+                    {uploadFile ? (
+                      <div className="flex items-center justify-center gap-2 text-sm text-gray-700">
+                        <FileCode size={14} className="text-[#1e3a7a]" />
+                        <span className="font-medium truncate max-w-[220px]">{uploadFile.name}</span>
+                        <span className="text-gray-400 text-xs">({(uploadFile.size / (1024 * 1024)).toFixed(1)} MB)</span>
+                        <button
+                          type="button"
+                          onClick={(e) => { e.stopPropagation(); setUploadFile(null); if (fileInputRef.current) fileInputRef.current.value = ''; }}
+                          className="text-gray-400 hover:text-red-500 cursor-pointer"
+                        >
+                          <X size={13} />
+                        </button>
+                      </div>
+                    ) : (
+                      <>
+                        <p className="text-gray-500 text-xs">Click or drag a <b>.zip</b> file here</p>
+                        <p className="text-gray-400 text-[10px] mt-1">Max {MAX_UPLOAD_MB}MB · .zip only</p>
+                      </>
+                    )}
+                  </div>
+                </div>
+              )}
               {formError && <p className="text-red-500 text-xs">{formError}</p>}
             </div>
             <div className="flex items-center justify-end gap-3 mt-6 pt-4 border-t border-gray-100">
-              <button onClick={() => { setShowModal(false); setFormError(''); }}
+              <button onClick={() => { setShowModal(false); setFormError(''); setUploadFile(null); }}
                 className="px-4 py-2 rounded-lg border border-gray-200 text-gray-500 text-sm font-medium hover:bg-gray-50 cursor-pointer transition-colors">
                 Cancel
               </button>
@@ -1032,4 +1126,3 @@ export default function ProjectsPage() {
     </div>
   );
 }
-

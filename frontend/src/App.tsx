@@ -102,6 +102,8 @@ function AuthGate() {
 
 function Dashboard() {
   const [activePage, setActivePage] = useState<Page>('dashboard');
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [aiOpen, setAiOpen] = useState(true);
   const meta = pageMeta[activePage];
 
   const renderPage = () => {
@@ -125,12 +127,20 @@ function Dashboard() {
 
   return (
     <div className="flex h-screen w-full overflow-hidden bg-[#f4f6fa]">
-      <Sidebar activePage={activePage} onNavigate={setActivePage} />
+      <Sidebar activePage={activePage} onNavigate={setActivePage} isOpen={sidebarOpen} onToggle={() => setSidebarOpen((v) => !v)} />
       <div className="flex-1 flex flex-col min-w-0">
-        <Header title={meta.title} subtitle={meta.subtitle} onNavigate={setActivePage} />
+        <Header
+          title={meta.title}
+          subtitle={meta.subtitle}
+          onNavigate={setActivePage}
+          sidebarOpen={sidebarOpen}
+          onToggleSidebar={() => setSidebarOpen((v) => !v)}
+          aiOpen={aiOpen}
+          onToggleAI={() => setAiOpen((v) => !v)}
+        />
         <main className="flex-1 overflow-hidden">{renderPage()}</main>
       </div>
-      <AIAssistant />
+      <AIAssistant isOpen={aiOpen} />
     </div>
   );
 }

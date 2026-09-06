@@ -5,7 +5,7 @@ const suggestions: { icon: any; text: string }[] = [];
 
 const initialMessages: { role: string; text: string }[] = [];
 
-export default function AIAssistant() {
+export default function AIAssistant({ isOpen = true }: { isOpen?: boolean }) {
   const [input, setInput] = useState('');
   const [messages, setMessages] = useState(initialMessages);
 
@@ -18,6 +18,8 @@ export default function AIAssistant() {
     ]);
     setInput('');
   };
+
+  if (!isOpen) return null;
 
   return (
     <aside className="w-72 flex-shrink-0 flex flex-col h-screen bg-[#0f1f4a] border-l border-[#1a2f68]">

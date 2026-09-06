@@ -12,6 +12,7 @@ import {
   Settings,
   Bot,
   LogOut,
+  PanelLeftClose,
   type LucideIcon,
 } from 'lucide-react';
 import { useAuth } from '@/context/useAuth';
@@ -21,6 +22,8 @@ type Page = 'dashboard' | 'projects' | 'agents' | 'infrastructure' | 'pipelines'
 interface SidebarProps {
   activePage: Page;
   onNavigate: (page: Page) => void;
+  isOpen?: boolean;
+  onToggle?: () => void;
 }
 
 const navItems: { id: Page; label: string; icon: LucideIcon }[] = [
@@ -39,20 +42,35 @@ const navItems: { id: Page; label: string; icon: LucideIcon }[] = [
   { id: 'settings', label: 'Settings', icon: Settings },
 ];
 
-export default function Sidebar({ activePage, onNavigate }: SidebarProps) {
+export default function Sidebar({ activePage, onNavigate, isOpen = true, onToggle }: SidebarProps) {
   const { logout } = useAuth();
 
   return (
-    <aside className="w-56 flex-shrink-0 flex flex-col h-screen bg-white border-r border-gray-100">
+    <aside
+      className={`${
+        isOpen ? 'w-56 opacity-100' : 'w-0 opacity-0 border-none pointer-events-none'
+      } flex-shrink-0 flex flex-col h-screen bg-white border-r border-gray-100 transition-all duration-300 ease-in-out overflow-hidden`}
+    >
       {/* Logo */}
-      <div className="flex items-center gap-3 px-5 py-5 border-b border-gray-100">
-        <img src="/favicon.png" alt="Infra Genie" className="w-10 h-10 object-contain flex-shrink-0" />
-        <div className="leading-tight">
-          <p className="font-bold text-base leading-tight">
-            <span className="text-[#1e3a7a]">Infra </span>
-            <span className="text-[#c9692a]">Genie</span>
-          </p>
+      <div className="flex items-center justify-between px-5 py-5 border-b border-gray-100 flex-shrink-0">
+        <div className="flex items-center gap-3">
+          <img src="/favicon.png" alt="Infra Genie" className="w-10 h-10 object-contain flex-shrink-0" />
+          <div className="leading-tight">
+            <p className="font-bold text-base leading-tight">
+              <span className="text-[#1e3a7a]">Infra </span>
+              <span className="text-[#c9692a]">Genie</span>
+            </p>
+          </div>
         </div>
+        {onToggle && (
+          <button
+            onClick={onToggle}
+            className="p-1.5 rounded-lg text-gray-400 hover:bg-gray-100 hover:text-gray-700 transition-colors cursor-pointer"
+            title="Close sidebar"
+          >
+            <PanelLeftClose size={18} />
+          </button>
+        )}
       </div>
 
       {/* Nav */}
