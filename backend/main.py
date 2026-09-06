@@ -80,7 +80,12 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
 ADMIN_CONTACT_MESSAGE = ("Admin accounts cannot be created from registration. "
                          "Contact Vaibhav or Raj for admin access.")
-SELF_SERVICE_ROLES = {"user", "developer", "devops_engineer"}
+# Only two roles are available at self-service signup:
+#   "user"         — individual user, no organization created
+#   "organization" — creates an org and makes the registrant its owner
+# All other roles (admin, developer, viewer, devops_engineer) are assigned
+# via team invitations only.
+SELF_SERVICE_ROLES = {"user", "organization"}
 
 
 class EmailOtpEntry(TypedDict):
@@ -174,38 +179,39 @@ async def require_user(token: str = Depends(oauth2_scheme),
 
 
 async def resolve_current_org(user: User, db: AsyncSession) -> Organization:
-    """Pick the user's current_org_id if valid, otherwise their first membership,
-    otherwise create a personal org on the fly (so a fresh user always has one)."""
+    """Return the user's active organization.
+
+    Resolution order:
+      1. current_org_id if it points to a valid org the user is a member of.
+      2. Their first membership org (and update current_org_id).
+
+    Plain 'user'-role accounts have no org. Callers that require an org
+    (projects, deployments, etc.) will get a 403 if none is found.
+    Organization-role users always have at least the org created at signup.
+    """
     if user.current_org_id:
         res = await db.execute(select(Organization).where(
             Organization.id == user.current_org_id))
         if (org := res.scalar_one_or_none()) is not None:
             return org
+
     member_res = await db.execute(
         select(Membership).where(Membership.user_id == user.id).limit(1))
     first = member_res.scalar_one_or_none()
     if first is not None:
         org_res = await db.execute(select(Organization).where(Organization.id == first.org_id))
-        org = org_res.scalar_one_one() if False else org_res.scalar_one_or_none()
+        org = org_res.scalar_one_or_none()
         if org is not None:
             user.current_org_id = org.id
             await db.commit()
             return org
-    # bootstrap a personal org
-    slug = (user.username + "-" + secrets.token_hex(4)).lower()
-    org = Organization(
-        name=f"{user.username}'s workspace",
-        slug=slug, plan=PlanTier.free.value,
-        plan_seats=1, plan_projects=3, plan_deployments_per_month=10,
+
+    raise HTTPException(
+        403,
+        "No organization found for this account. "
+        "Register with the 'organization' role to create one, "
+        "or ask an organization owner to invite you.",
     )
-    db.add(org)
-    await db.flush()
-    db.add(Membership(user_id=user.id, org_id=org.id, role=OrgRole.owner.value, joined_at=datetime.utcnow()))
-    db.add(Subscription(org_id=org.id, plan=PlanTier.free.value, status="active"))
-    user.current_org_id = org.id
-    await db.commit()
-    await db.refresh(org)
-    return org
 
 
 async def get_current_user_with_org(
@@ -268,24 +274,31 @@ async def register(payload: UserCreate, db: AsyncSession = Depends(get_db)):
                 hashed_password=hash_password(payload.password), role=role)
     db.add(user)
     await db.flush()
-    # v3: bootstrap a personal org + owner membership for the new user
-    org_name = (payload.org_name or f"{user.username}'s workspace").strip()
-    slug = (org_name + "-" + secrets.token_hex(4)).replace(" ", "-").lower()
-    org = Organization(name=org_name, slug=slug, plan=PlanTier.free.value,
-                       plan_seats=1, plan_projects=3, plan_deployments_per_month=10)
-    db.add(org)
-    await db.flush()
-    db.add(Membership(user_id=user.id, org_id=org.id,
-                      role=OrgRole.owner.value, joined_at=datetime.utcnow()))
-    db.add(Subscription(org_id=org.id, plan=PlanTier.free.value, status="active"))
-    user.current_org_id = org.id
+
+    org = None
+    if role == "organization":
+        # Only organization-role signups get their own org.
+        org_name = (payload.org_name or f"{user.username}'s organization").strip()
+        slug = (org_name + "-" + secrets.token_hex(4)).replace(" ", "-").lower()
+        org = Organization(name=org_name, slug=slug, plan=PlanTier.free.value,
+                           plan_seats=1, plan_projects=3, plan_deployments_per_month=10)
+        db.add(org)
+        await db.flush()
+        db.add(Membership(user_id=user.id, org_id=org.id,
+                          role=OrgRole.owner.value, joined_at=datetime.utcnow()))
+        user.current_org_id = org.id
+
     await db.commit()
     await db.refresh(user)
-    await db.refresh(org)
+    if org:
+        await db.refresh(org)
     EMAIL_OTP_STORE.pop(normalize_email(payload.email), None)
     token = create_access_token({"sub": str(user.id)})
-    return TokenResponse(access_token=token, user=UserOut.model_validate(user),
-                         current_org=OrganizationOut.model_validate(org))
+    return TokenResponse(
+        access_token=token,
+        user=UserOut.model_validate(user),
+        current_org=OrganizationOut.model_validate(org) if org else None,
+    )
 
 
 @app.post("/auth/login", response_model=TokenResponse, tags=["auth"])
@@ -337,7 +350,6 @@ async def create_org(payload: OrganizationCreate,
     await db.flush()
     db.add(Membership(user_id=current_user.id, org_id=org.id,
                       role=OrgRole.owner.value, joined_at=datetime.utcnow()))
-    db.add(Subscription(org_id=org.id, plan=PlanTier.free.value, status="active"))
     await db.commit()
     await db.refresh(org)
     db.add(AuditLog(org_id=org.id, actor_id=current_user.id,
