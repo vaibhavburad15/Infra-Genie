@@ -248,10 +248,8 @@ Make sure the following are installed:
 * Python 3.10+
 * Node.js 18+
 * npm
-* Docker
+* Docker Desktop (manages Redis and PostgreSQL — no separate Redis or PostgreSQL install needed)
 * Docker Compose
-* PostgreSQL
-* Redis
 * Git
 
 You also need access to a **Kimi K2 model served through vLLM**.
@@ -395,6 +393,10 @@ Start the worker:
 ```bash
 python worker.py
 ```
+
+> **Note:** `worker.py` is self-contained — it will automatically launch Docker Desktop
+> if it is not running, start the Redis container if it is stopped, and wait for Redis
+> to be ready before starting the queue listener. No manual Redis startup is required.
 
 The worker processes long-running jobs such as:
 
