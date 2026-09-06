@@ -24,7 +24,7 @@ import SettingsPage from '@/pages/SettingsPage';
 type Page = 'dashboard' | 'projects' | 'deployments' | 'agents' | 'monitoring' | 'insights' | 'infrastructure' | 'pipelines' | 'security' | 'cost' | 'automation' | 'reports' | 'settings';
 
 const pageMeta: Record<Page, { title: string; subtitle: string }> = {
-  dashboard: { title: 'Dashboard', subtitle: 'Infrastructure overview and real-time status' },
+  dashboard: { title: 'Overview', subtitle: 'Infrastructure overview and real-time status' },
   projects: { title: 'Projects', subtitle: 'Manage your cloud projects and services' },
   infrastructure: { title: 'Infrastructure', subtitle: 'Cloud resources and infrastructure management' },
   pipelines: { title: 'Pipelines', subtitle: 'CI/CD pipeline management and history' },
