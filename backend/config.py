@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     # ── Database ──────────────────────────────────────────────────────────────
     database_url: str
     redis_url: str
+    redis_container: str = ""              # REDIS_CONTAINER — Redis Docker container name
 
     # ── LLM (OpenAI-compatible vLLM) ─────────────────────────────────────────
     llm_base_url: str

@@ -34,7 +34,6 @@ from tasks import get_redis_conn
 # ──────────────────────────────────────────────
 # Config
 # ──────────────────────────────────────────────
-REDIS_CONTAINER    = "vibrant_bohr"
 REDIS_HOST         = "localhost"
 REDIS_PORT         = 6379
 DOCKER_DESKTOP_EXE = r"C:\Program Files\Docker\Docker\Docker Desktop.exe"
@@ -43,6 +42,49 @@ DOCKER_DESKTOP_EXE = r"C:\Program Files\Docker\Docker\Docker Desktop.exe"
 # ──────────────────────────────────────────────
 # Helpers
 # ──────────────────────────────────────────────
+def get_redis_container_name() -> str:
+    """
+    Resolve the Redis container name in priority order:
+      1. settings.redis_container (.env via Pydantic) — recommended for teams
+      2. REDIS_CONTAINER shell env var               — set directly in terminal
+      3. Auto-detect: first container whose image is redis (any tag)
+      4. Raise a clear error telling the dev what to do
+    """
+    # 1 — Pydantic settings (.env file)
+    if settings.redis_container.strip():
+        return settings.redis_container.strip()
+
+    # 2 — raw shell env var (set directly in terminal, not via .env)
+    name = os.getenv("REDIS_CONTAINER", "").strip()
+    if name:
+        return name
+
+    # 3 — auto-detect from image name (covers redis:7, redis:latest, etc.)
+    result = subprocess.run(
+        [
+            "docker", "ps", "-a",
+            "--filter", "ancestor=redis",
+            "--format", "{{.Names}}"
+        ],
+        capture_output=True, text=True
+    )
+    containers = [c.strip() for c in result.stdout.splitlines() if c.strip()]
+    if containers:
+        detected = containers[0]
+        print(
+            f"[worker] REDIS_CONTAINER not set — auto-detected container: '{detected}'\n"
+            f"[worker] Tip: add REDIS_CONTAINER={detected} to your .env to skip detection."
+        )
+        return detected
+
+    # 4 — nothing found
+    raise RuntimeError(
+        "[worker] Could not find a Redis Docker container.\n"
+        "  Fix: add REDIS_CONTAINER=<your-container-name> to your .env file.\n"
+        "  To list all containers: docker ps -a"
+    )
+
+
 def is_docker_running() -> bool:
     """Return True if the Docker daemon is reachable (docker info exits 0)."""
     result = subprocess.run(
@@ -52,13 +94,13 @@ def is_docker_running() -> bool:
     return result.returncode == 0
 
 
-def is_container_running() -> bool:
+def is_container_running(container_name: str) -> bool:
     """
     Ask Docker directly whether the container is in 'running' state.
     More reliable than a port check — something else could be on :6379.
     """
     result = subprocess.run(
-        ["docker", "inspect", "--format", "{{.State.Running}}", REDIS_CONTAINER],
+        ["docker", "inspect", "--format", "{{.State.Running}}", container_name],
         capture_output=True, text=True
     )
     return result.returncode == 0 and result.stdout.strip() == "true"
@@ -83,13 +125,12 @@ def ensure_redis():
         if not os.path.exists(DOCKER_DESKTOP_EXE):
             raise RuntimeError(
                 f"[worker] Docker Desktop not found at:\n  {DOCKER_DESKTOP_EXE}\n"
-                f"Please start Docker Desktop manually and retry."
+                "Please start Docker Desktop manually and retry."
             )
 
         # Popen — don't block; Docker Desktop is a GUI app
         subprocess.Popen([DOCKER_DESKTOP_EXE])
 
-        # Poll up to 60 s for the daemon to become ready
         print("[worker] Waiting for Docker daemon to be ready (this may take ~30s)...")
         for attempt in range(1, 61):
             time.sleep(1)
@@ -104,22 +145,27 @@ def ensure_redis():
             )
 
     # ── Step 2: Container state ────────────────────────────────────────────
-    if is_container_running():
-        print(f"[worker] Container '{REDIS_CONTAINER}' is already running.")
+    # Resolved here — after Docker is confirmed up — so auto-detect works
+    redis_container = get_redis_container_name()
+
+    if is_container_running(redis_container):
+        print(f"[worker] Container '{redis_container}' is already running.")
     else:
-        print(f"[worker] Container '{REDIS_CONTAINER}' is stopped — starting it...")
+        print(f"[worker] Container '{redis_container}' is stopped — starting it...")
         result = subprocess.run(
-            ["docker", "start", REDIS_CONTAINER],
+            ["docker", "start", redis_container],
             capture_output=True, text=True
         )
         if result.returncode != 0:
             raise RuntimeError(
-                f"[worker] Failed to start container '{REDIS_CONTAINER}':\n"
+                f"[worker] Failed to start container '{redis_container}':\n"
                 f"{result.stderr}"
             )
-        print(f"[worker] Container '{REDIS_CONTAINER}' started.")
+        print(f"[worker] Container '{redis_container}' started.")
 
     # ── Step 3: Redis readiness (always checked) ───────────────────────────
+    # Runs whether the container was just started OR was already up.
+    # Catches: container up but Redis still initializing / process crashed.
     for attempt in range(1, 11):
         with socket.socket() as s:
             try:
@@ -132,7 +178,7 @@ def ensure_redis():
 
     raise RuntimeError(
         f"[worker] Redis never became ready on {REDIS_HOST}:{REDIS_PORT} after 10s.\n"
-        f"Check container logs with:  docker logs {REDIS_CONTAINER}"
+        f"Check container logs with:  docker logs {redis_container}"
     )
 
 
