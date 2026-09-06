@@ -567,11 +567,12 @@ async def approve_deployment(deployment_id, payload: ApproveDeployment,
                         target_id=str(d.id)))
         await db.commit()
         return d
-    d.status = DeploymentStatus.running
+    # ── Deployment execution is not yet implemented ────────────────────────
+    # Approving records intent but does NOT queue a job. The deployment stays
+    # in awaiting_approval so the frontend can surface the "coming soon" state.
     d.approved_by = current_user.id
     d.approved_at = datetime.utcnow()
-    await db.commit()
-    get_queue().enqueue(task_run_deployment, str(d.id), job_timeout=600)
+    # Leave status as awaiting_approval — real provisioning is not wired up yet.
     db.add(AuditLog(org_id=org.id, actor_id=current_user.id,
                     action="deployment.approve", target_type="deployment",
                     target_id=str(d.id)))
