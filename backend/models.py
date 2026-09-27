@@ -5,7 +5,6 @@ Tables (some added in v3 for the SaaS structure):
   users        — accounts
   organizations — tenant boundary (every project belongs to one org)
   memberships  — user ↔ org with role (owner | admin | developer | viewer)
-  subscriptions — current plan tier per org
   projects     — per-tenant project; owner_id is the user who created it
   deployments  — per-project deployment record (created on analysis completion)
   reports      — generated reports (created on deployment completion)
@@ -78,6 +77,38 @@ async def init_db():
             "ALTER TABLE deployments ADD COLUMN IF NOT EXISTS duration_seconds INTEGER"))
         await conn.execute(text(
             "ALTER TABLE deployments ADD COLUMN IF NOT EXISTS artifact_dir VARCHAR(500)"))
+        # Cloud accounts table (AWS cross-account connection)
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS cloud_accounts (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                user_id UUID NOT NULL REFERENCES users(id),
+                provider VARCHAR(20) NOT NULL DEFAULT 'AWS',
+                account_id VARCHAR(20) NOT NULL,
+                role_arn VARCHAR(300),
+                external_id VARCHAR(100) NOT NULL,
+                region VARCHAR(50) NOT NULL DEFAULT 'ap-south-1',
+                status VARCHAR(20) NOT NULL DEFAULT 'PENDING',
+                connection_error TEXT,
+                created_at TIMESTAMP DEFAULT NOW(),
+                updated_at TIMESTAMP DEFAULT NOW(),
+                last_verified_at TIMESTAMP
+            )
+        """))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_cloud_accounts_user_provider "
+            "ON cloud_accounts (user_id, provider)"
+        ))
+        # Remove subscription-related columns and table (idempotent)
+        await conn.execute(text(
+            "DROP TABLE IF EXISTS subscriptions CASCADE"))
+        await conn.execute(text(
+            "ALTER TABLE organizations DROP COLUMN IF EXISTS plan"))
+        await conn.execute(text(
+            "ALTER TABLE organizations DROP COLUMN IF EXISTS plan_seats"))
+        await conn.execute(text(
+            "ALTER TABLE organizations DROP COLUMN IF EXISTS plan_projects"))
+        await conn.execute(text(
+            "ALTER TABLE organizations DROP COLUMN IF EXISTS plan_deployments_per_month"))
 
 
 # ── Enums ─────────────────────────────────────────────────────────────────────
@@ -106,13 +137,6 @@ class OrgRole(str, enum.Enum):
     viewer = "viewer"
 
 
-class PlanTier(str, enum.Enum):
-    free = "free"
-    starter = "starter"
-    pro = "pro"
-    enterprise = "enterprise"
-
-
 # ── ORM Models ────────────────────────────────────────────────────────────────
 
 class User(Base):
@@ -137,15 +161,10 @@ class Organization(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     slug: Mapped[str] = mapped_column(String(100), unique=True, nullable=False, index=True)
-    plan: Mapped[str] = mapped_column(String(50), nullable=False, default=PlanTier.free.value)
-    plan_seats: Mapped[Optional[int]] = mapped_column(Integer, default=1)
-    plan_projects: Mapped[Optional[int]] = mapped_column(Integer, default=3)
-    plan_deployments_per_month: Mapped[Optional[int]] = mapped_column(Integer, default=10)
     created_at: Mapped[Optional[datetime]] = mapped_column(DateTime, default=datetime.utcnow)
 
     memberships: Mapped[List["Membership"]] = relationship(back_populates="organization", cascade="all, delete-orphan")
     projects: Mapped[List["Project"]] = relationship(back_populates="organization")
-    subscription: Mapped[Optional["Subscription"]] = relationship(back_populates="organization", uselist=False)
 
 
 class Membership(Base):
@@ -161,20 +180,6 @@ class Membership(Base):
 
     user: Mapped["User"] = relationship(back_populates="memberships")
     organization: Mapped["Organization"] = relationship(back_populates="memberships")
-
-
-class Subscription(Base):
-    __tablename__ = "subscriptions"
-
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    org_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("organizations.id"), unique=True, nullable=False)
-    plan: Mapped[str] = mapped_column(String(50), nullable=False, default=PlanTier.pro.value)
-    status: Mapped[str] = mapped_column(String(50), nullable=False, default="active")
-    current_period_end: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
-    created_at: Mapped[Optional[datetime]] = mapped_column(DateTime, default=datetime.utcnow)
-    updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-
-    organization: Mapped["Organization"] = relationship(back_populates="subscription")
 
 
 class Project(Base):
@@ -258,6 +263,51 @@ class AuditLog(Base):
     target_id: Mapped[Optional[str]] = mapped_column(String(80), nullable=True)
     metadata_json: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON, nullable=True)
     created_at: Mapped[Optional[datetime]] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+
+class CloudAccountStatus(str, enum.Enum):
+    pending = "PENDING"
+    verifying = "VERIFYING"
+    connected = "CONNECTED"
+    failed = "FAILED"
+    disconnected = "DISCONNECTED"
+
+
+class CloudAccount(Base):
+    """
+    Stores a user's connected cloud account (currently AWS only).
+
+    Security notes:
+    - external_id is the cryptographically random UUID we generate and hand to
+      the customer so they can embed it in their IAM trust policy.  This prevents
+      the "confused deputy" attack.
+    - role_arn is supplied by the user AFTER they create the CloudFormation stack.
+    - We NEVER store AWS access keys, secret keys, or STS session tokens here.
+      Temporary credentials obtained via AssumeRole are used in-memory only and
+      discarded after each API call.
+    - user_id is always validated so User A can never see User B's accounts.
+    """
+    __tablename__ = "cloud_accounts"
+    __table_args__ = (
+        Index("ix_cloud_accounts_user_provider", "user_id", "provider"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True)
+    provider: Mapped[str] = mapped_column(String(20), nullable=False, default="AWS")
+    account_id: Mapped[str] = mapped_column(String(20), nullable=False)
+    role_arn: Mapped[Optional[str]] = mapped_column(String(300), nullable=True)
+    external_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    region: Mapped[str] = mapped_column(String(50), nullable=False, default="ap-south-1")
+    status: Mapped[CloudAccountStatus] = mapped_column(
+        SAEnum(CloudAccountStatus), nullable=False, default=CloudAccountStatus.pending
+    )
+    connection_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    last_verified_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+    user: Mapped["User"] = relationship("User")
 
 
 class AgentConfig(Base):
@@ -416,10 +466,6 @@ class OrganizationOut(BaseModel):
     id: uuid.UUID
     name: str
     slug: str
-    plan: str
-    plan_seats: Optional[int]
-    plan_projects: Optional[int]
-    plan_deployments_per_month: Optional[int]
     created_at: datetime
 
     @field_serializer('created_at', mode='plain')
@@ -474,6 +520,77 @@ class AuditLogOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+# ── Cloud Account schemas ─────────────────────────────────────────────────────
+
+class CloudAccountConnect(BaseModel):
+    """Request body for POST /api/cloud/aws/connect"""
+    account_id: str
+    region: str = "ap-south-1"
+
+    @field_validator("account_id")
+    @classmethod
+    def validate_aws_account_id(cls, v: str) -> str:
+        stripped = v.strip()
+        if not stripped.isdigit() or len(stripped) != 12:
+            raise ValueError("AWS Account ID must be exactly 12 digits")
+        return stripped
+
+    @field_validator("region")
+    @classmethod
+    def validate_region(cls, v: str) -> str:
+        # Basic sanity check; full list validated in service layer
+        if not v.strip():
+            raise ValueError("Region is required")
+        return v.strip()
+
+
+class CloudAccountVerify(BaseModel):
+    """Request body for POST /api/cloud/aws/{connection_id}/verify"""
+    role_arn: str
+
+    @field_validator("role_arn")
+    @classmethod
+    def validate_arn(cls, v: str) -> str:
+        v = v.strip()
+        if not v.startswith("arn:aws:iam::"):
+            raise ValueError("role_arn must be a valid IAM role ARN (arn:aws:iam::...)")
+        return v
+
+
+class CloudAccountOut(BaseModel):
+    """Safe representation — NEVER includes credentials or the external_id."""
+    id: uuid.UUID
+    provider: str
+    account_id: str
+    role_arn: Optional[str]
+    region: str
+    status: CloudAccountStatus
+    connection_error: Optional[str]
+    created_at: datetime
+    updated_at: Optional[datetime]
+    last_verified_at: Optional[datetime]
+
+    @field_serializer("created_at", "updated_at", "last_verified_at", mode="plain")
+    def serialize_dates(self, v: Optional[datetime]) -> Optional[str]:
+        return serialize_utc_datetime(v)
+
+    class Config:
+        from_attributes = True
+
+
+class CloudAccountConnectResponse(BaseModel):
+    """Returned after POST /api/cloud/aws/connect — includes setup info."""
+    connection_id: uuid.UUID
+    provider: str
+    account_id: str
+    region: str
+    external_id: str        # needed by the user to embed in CloudFormation
+    role_name: str
+    status: CloudAccountStatus
+    devopsiq_account_id: str
+    cloudformation_template: dict   # the full CFN template as JSON
 
 
 TokenResponse.model_rebuild()

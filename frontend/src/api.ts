@@ -74,17 +74,6 @@ export interface Organization {
   id: string;
   name: string;
   slug: string;
-  plan: string;
-  plan_seats: number;
-  plan_projects: number;
-  plan_deployments_per_month: number;
-}
-
-export interface Subscription {
-  plan: string;
-  seats?: number;
-  projects?: number;
-  deployments_per_month?: number;
 }
 
 export interface AuditLogEntry {
@@ -592,10 +581,6 @@ export async function createOrg(payload: { name: string }): Promise<Organization
 
 export async function switchOrg(orgId: string): Promise<void> {
   return request<void>(`/orgs/${encodeURIComponent(orgId)}/switch`, { method: 'POST' });
-}
-
-export async function getMySubscription(): Promise<Subscription> {
-  return request<Subscription>('/subscription/me');
 }
 
 export async function getAuditLog(limit = 50): Promise<AuditLogEntry[]> {

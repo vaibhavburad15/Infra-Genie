@@ -5,7 +5,6 @@ Routes:
   Auth     : /auth/{register, login, me, email-otp/{request, verify}}
   Orgs     : /orgs (list/create), /orgs/{id}, /orgs/{id}/members, /orgs/{id}/switch
   Audit    : /audit-log
-  Subscr.  : /subscription/me, /subscription/change
   Projects : /projects (CRUD, upload, analyze)
   Deploys  : /projects/{pid}/deployments, /deployments/{did}/approve
   Reports  : /projects/{pid}/reports
@@ -34,20 +33,19 @@ from fastapi.responses import StreamingResponse
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete
-from sqlalchemy import func as sqlfunc
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 
 from config import settings
 from models import (
     init_db, get_db,
-    User, Organization, Membership, Subscription, Project, Deployment,
+    User, Organization, Membership, Project, Deployment,
     Report, AuditLog,
     UserCreate, UserOut, TokenResponse, EmailOtpRequest, EmailOtpVerify,
     ProjectCreate, ProjectOut, DeploymentOut, ReportOut, ApproveDeployment,
     OrganizationCreate, OrganizationOut, MembershipOut, MembershipInvite,
     AuditLogOut,
-    ProjectStatus, DeploymentStatus, OrgRole, PlanTier,
+    ProjectStatus, DeploymentStatus, OrgRole,
 )
 from tasks import get_queue, get_redis_conn, task_analyze_project, task_run_deployment
 from llm import chat_stream
@@ -280,8 +278,7 @@ async def register(payload: UserCreate, db: AsyncSession = Depends(get_db)):
         # Only organization-role signups get their own org.
         org_name = (payload.org_name or f"{user.username}'s organization").strip()
         slug = (org_name + "-" + secrets.token_hex(4)).replace(" ", "-").lower()
-        org = Organization(name=org_name, slug=slug, plan=PlanTier.free.value,
-                           plan_seats=1, plan_projects=3, plan_deployments_per_month=10)
+        org = Organization(name=org_name, slug=slug)
         db.add(org)
         await db.flush()
         db.add(Membership(user_id=user.id, org_id=org.id,
@@ -323,7 +320,7 @@ async def get_me(current_user: User = Depends(require_user)):
     return UserOut.model_validate(current_user)
 
 
-# ── v3 Org / Member / Audit / Subscription routes ────────────────────────────
+# ── v3 Org / Member / Audit routes ───────────────────────────────────────────
 
 @app.get("/orgs", response_model=List[OrganizationOut], tags=["orgs"])
 async def list_orgs(current_user: User = Depends(require_user),
@@ -344,8 +341,7 @@ async def create_org(payload: OrganizationCreate,
         raise HTTPException(400, "Organization name is required")
     slug = (payload.slug or base).strip().replace(" ", "-").lower()
     slug = "".join(c if c.isalnum() or c in "-_" else "" for c in slug)[:80] or secrets.token_hex(4)
-    org = Organization(name=base, slug=slug, plan=PlanTier.free.value,
-                       plan_seats=3, plan_projects=10, plan_deployments_per_month=30)
+    org = Organization(name=base, slug=slug)
     db.add(org)
     await db.flush()
     db.add(Membership(user_id=current_user.id, org_id=org.id,
@@ -419,20 +415,6 @@ async def list_audit(limit: int = 100, current_user: User = Depends(require_user
     return res.scalars().all()
 
 
-@app.get("/subscription/me", tags=["subscription"])
-async def my_subscription(current_user: User = Depends(require_user),
-                          db: AsyncSession = Depends(get_db)):
-    org = await resolve_current_org(current_user, db)
-    sub = (await db.execute(select(Subscription).where(Subscription.org_id == org.id))).scalar_one_or_none()
-    return {
-        "plan": sub.plan if sub else org.plan,
-        "status": sub.status if sub else "active",
-        "current_period_end": sub.current_period_end if sub else None,
-        "seats": org.plan_seats, "projects": org.plan_projects,
-        "deployments_per_month": org.plan_deployments_per_month,
-    }
-
-
 # ── Project routes (now scoped by org, with quota check) ─────────────────────
 
 @app.get("/projects", response_model=List[ProjectOut], tags=["projects"])
@@ -449,12 +431,6 @@ async def create_project(payload: ProjectCreate,
                          current_user: User = Depends(require_user),
                          db: AsyncSession = Depends(get_db)):
     org = await resolve_current_org(current_user, db)
-    # quota
-    count = (await db.execute(select(sqlfunc.count(Project.id)).where(
-        Project.org_id == org.id))).scalar_one() or 0
-    if org.plan_projects and count >= org.plan_projects:
-        raise HTTPException(402, f"Project quota reached for plan '{org.plan}' "
-                                 f"({org.plan_projects}). Upgrade in Settings.")
     p = Project(name=payload.name, description=payload.description or "",
                 source_type=payload.source_type, github_url=payload.github_url,
                 owner_id=current_user.id, org_id=org.id)
@@ -668,9 +644,6 @@ async def metrics_overview(current_user: User = Depends(require_user),
         "databases": has_db,
         "with_docker": has_docker,
         "reports_total": len(reports),
-        "tier": {"plan": org.plan, "seats": org.plan_seats,
-                 "projects": org.plan_projects,
-                 "deployments_per_month": org.plan_deployments_per_month},
     }
 
 

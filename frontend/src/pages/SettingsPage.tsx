@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react';
 import { Settings, User, Bell, Shield, Cloud, Zap, LogOut,
-         Building2, Loader, AlertTriangle, RefreshCw, Plus, CheckCircle2,
-         ShieldCheck, Users } from 'lucide-react';
+         Building2, AlertTriangle, RefreshCw, Plus, CheckCircle2,
+         Users } from 'lucide-react';
 import { useAuth } from '@/context/useAuth';
 import * as api from '@/api';
 import { ForbiddenError } from '@/api';
-import type { UserRole, Organization, Subscription, AuditLogEntry } from '@/api';
+import type { UserRole, Organization, AuditLogEntry } from '@/api';
 
 const roleLabels: Record<string, string> = { user: 'Individual', organization: 'Organization', developer: 'Developer',
   devops_engineer: 'DevOps Engineer', admin: 'Admin' };
@@ -14,7 +14,6 @@ export default function SettingsPage() {
   const { user, logout } = useAuth();
   const displayRole = user?.role ? roleLabels[user.role] : 'User';
   const [orgs, setOrgs] = useState<Organization[]>([]);
-  const [sub, setSub] = useState<Subscription | null>(null);
   const [audit, setAudit] = useState<AuditLogEntry[]>([]);
   const [members, setMembers] = useState<any[]>([]);
   const [newOrgName, setNewOrgName] = useState('');
@@ -29,11 +28,6 @@ export default function SettingsPage() {
       // org list and audit log require org membership — handle 403 gracefully
       try { const o = await api.listOrgs(); setOrgs(o); } catch (e) {
         if (!(e instanceof ForbiddenError)) throw e;
-      }
-      // subscription may be absent for new accounts — null is fine
-      try { const s = await api.getMySubscription(); setSub(s); } catch (e) {
-        if (!(e instanceof ForbiddenError)) throw e;
-        setSub(null);
       }
       try { const a = await api.getAuditLog(50); setAudit(a); } catch (e) {
         if (!(e instanceof ForbiddenError)) throw e;
@@ -103,10 +97,8 @@ export default function SettingsPage() {
             <div key={o.id} className={`rounded-xl border p-4 ${o.id === currentOrg?.id ? 'border-[#c9692a] bg-[#fdf3eb]' : 'border-gray-100'}`}>
               <div className="flex items-center justify-between mb-1">
                 <span className="text-gray-800 text-sm font-bold truncate">{o.name}</span>
-                <span className="text-[10px] uppercase font-bold tracking-wide px-2 py-0.5 rounded-full bg-gray-100 text-gray-500">{o.plan}</span>
               </div>
               <p className="text-gray-400 text-xs">/{o.slug}</p>
-              <p className="text-gray-400 text-xs mt-1½">Seats: {o.plan_seats} · Projects: {o.plan_projects} · Deploys/mo: {o.plan_deployments_per_month}</p>
             </div>
           ))}
         </div>
@@ -119,32 +111,6 @@ export default function SettingsPage() {
             <Plus size={14} /> Create
           </button>
         </div>
-      </div>
-
-      <div className="bg-white rounded-2xl p-5 border border-gray-100">
-        <div className="flex items-center gap-3 mb-5">
-          <div className="w-10 h-10 rounded-xl bg-[#fdf3eb] flex items-center justify-center"><ShieldCheck size={18} className="text-[#c9692a]" /></div>
-          <h3 className="text-gray-800 font-bold text-sm">Subscription & plan</h3>
-        </div>
-        {sub ? (
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            {[
-              { label: 'Plan', value: sub.plan.toUpperCase() },
-              { label: 'Seats', value: sub.seats ?? '—' },
-              { label: 'Projects allowed', value: sub.projects ?? '—' },
-              { label: 'Deploys / month', value: sub.deployments_per_month ?? '—' },
-            ].map((s) => (
-              <div key={s.label as string} className="bg-gray-50 border border-gray-100 rounded-xl p-3">
-                <p className="text-gray-400 text-[10px] uppercase tracking-wider">{s.label}</p>
-                <p className="text-gray-800 text-base font-bold mt-1">{s.value}</p>
-              </div>
-            ))}
-          </div>
-        ) : loading ? <Loader className="animate-spin text-[#c9692a]" size={18} /> : (
-          <div className="flex items-center gap-3 px-4 py-3 rounded-xl bg-gray-50 border border-gray-100">
-            <p className="text-gray-400 text-sm">No active subscription. Subscription details will appear once you belong to an organization.</p>
-          </div>
-        )}
       </div>
 
       <div className="bg-white rounded-2xl p-5 border border-gray-100">
