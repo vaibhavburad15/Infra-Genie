@@ -20,8 +20,9 @@ import CostPage from '@/pages/CostPage';
 import AutomationPage from '@/pages/AutomationPage';
 import ReportsPage from '@/pages/ReportsPage';
 import SettingsPage from '@/pages/SettingsPage';
+import CloudAccountsPage from '@/pages/CloudAccountsPage';
 
-type Page = 'dashboard' | 'projects' | 'deployments' | 'agents' | 'monitoring' | 'insights' | 'infrastructure' | 'pipelines' | 'security' | 'cost' | 'automation' | 'reports' | 'settings';
+type Page = 'dashboard' | 'projects' | 'deployments' | 'agents' | 'monitoring' | 'insights' | 'infrastructure' | 'pipelines' | 'security' | 'cost' | 'automation' | 'reports' | 'settings' | 'cloud-accounts';
 
 const pageMeta: Record<Page, { title: string; subtitle: string }> = {
   dashboard: { title: 'Overview', subtitle: 'Infrastructure overview and real-time status' },
@@ -37,6 +38,7 @@ const pageMeta: Record<Page, { title: string; subtitle: string }> = {
   insights: { title: 'AI Insights', subtitle: 'AI-powered recommendations and optimization' },
   reports: { title: 'Reports', subtitle: 'Generate and download infrastructure reports' },
   settings: { title: 'Settings', subtitle: 'Manage your account and preferences' },
+  'cloud-accounts': { title: 'Cloud Accounts', subtitle: 'Connect and manage your AWS accounts' },
 };
 
 function AuthGate() {
@@ -121,6 +123,7 @@ function Dashboard() {
       case 'reports': return <ReportsPage />;
       case 'settings': return <SettingsPage />;
       case 'infrastructure': return <InfrastructurePage />;
+      case 'cloud-accounts': return <CloudAccountsPage />;
       default: return <DashboardPage />;
     }
   };

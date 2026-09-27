@@ -586,3 +586,105 @@ export async function switchOrg(orgId: string): Promise<void> {
 export async function getAuditLog(limit = 50): Promise<AuditLogEntry[]> {
   return request<AuditLogEntry[]>(`/audit-log?limit=${limit}`);
 }
+
+// ── Cloud Accounts (AWS cross-account connection) ─────────────────────────────
+
+export type CloudAccountStatus = 'PENDING' | 'VERIFYING' | 'CONNECTED' | 'FAILED' | 'DISCONNECTED';
+
+export interface CloudAccountConnectRequest {
+  account_id: string;
+  region: string;
+}
+
+export interface CloudFormationTemplate {
+  AWSTemplateFormatVersion: string;
+  Description: string;
+  Parameters: Record<string, unknown>;
+  Resources: Record<string, unknown>;
+  Outputs: Record<string, unknown>;
+}
+
+export interface CloudAccountConnectResponse {
+  connection_id: string;
+  provider: string;
+  account_id: string;
+  region: string;
+  external_id: string;
+  role_name: string;
+  status: CloudAccountStatus;
+  devopsiq_account_id: string;
+  cloudformation_template: CloudFormationTemplate;
+}
+
+export interface CloudAccountOut {
+  id: string;
+  provider: string;
+  account_id: string;
+  role_arn: string | null;
+  region: string;
+  status: CloudAccountStatus;
+  connection_error: string | null;
+  created_at: string;
+  updated_at: string | null;
+  last_verified_at: string | null;
+}
+
+export interface CloudAccountVerifyRequest {
+  role_arn: string;
+}
+
+export interface CloudAccountVerifyResponse {
+  status: 'CONNECTED' | 'FAILED';
+  account_id?: string;
+  region?: string;
+  role_arn?: string;
+  last_verified_at?: string | null;
+  message?: string;
+  error_code?: string;
+}
+
+export interface CloudAccountDisconnectResponse {
+  status: 'DISCONNECTED';
+  message: string;
+}
+
+/** Step 1 — register the intent to connect and get the CFN template. */
+export async function connectAWSAccount(
+  payload: CloudAccountConnectRequest,
+): Promise<CloudAccountConnectResponse> {
+  return request<CloudAccountConnectResponse>('/api/cloud/aws/connect', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+}
+
+/** Step 2 — provide the Role ARN and trigger STS verification. */
+export async function verifyAWSConnection(
+  connectionId: string,
+  payload: CloudAccountVerifyRequest,
+): Promise<CloudAccountVerifyResponse> {
+  return request<CloudAccountVerifyResponse>(
+    `/api/cloud/aws/${encodeURIComponent(connectionId)}/verify`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+/** List all AWS accounts the current user has connected. */
+export async function listAWSConnections(): Promise<CloudAccountOut[]> {
+  return request<CloudAccountOut[]>('/api/cloud/aws');
+}
+
+/** Soft-disconnect — removes the DevOpsIQ record, does NOT delete the IAM role. */
+export async function disconnectAWSAccount(
+  connectionId: string,
+): Promise<CloudAccountDisconnectResponse> {
+  return request<CloudAccountDisconnectResponse>(
+    `/api/cloud/aws/${encodeURIComponent(connectionId)}`,
+    { method: 'DELETE' },
+  );
+}

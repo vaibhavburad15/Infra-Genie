@@ -59,6 +59,32 @@ class Settings(BaseSettings):
     smtp_use_tls: bool = True
     email_otp_expire_minutes: int = 10
 
+    # ── AWS Cross-Account Connection ──────────────────────────────────────────
+    # AWS_DEVOPSIQ_ACCOUNT_ID
+    #   The 12-digit AWS Account ID where the DevOpsIQ backend is running.
+    #   Used as the Principal in the customer's IAM trust policy and embedded
+    #   in every generated CloudFormation template.
+    #   DO NOT hardcode this value — always read it from the environment.
+    aws_devopsiq_account_id: str = "123456789012"   # placeholder — override in .env
+
+    # AWS_DEFAULT_REGION
+    #   The AWS region used for the DevOpsIQ-side STS client.
+    #   Customer resources may be in a different region (stored per connection).
+    aws_default_region: str = "ap-south-1"          # AWS_DEFAULT_REGION
+
+    # AWS_ROLE_NAME
+    #   The name DevOpsIQ expects for the cross-account IAM role in every
+    #   customer account.  Used in ARN validation and CloudFormation templates.
+    aws_role_name: str = "DevOpsIQExecutionRole"     # AWS_ROLE_NAME
+
+    # Standard boto3 credential env vars — set these for local dev / CI.
+    # In production, prefer an EC2 instance role or ECS task role instead.
+    # boto3 reads these automatically; we don't need to reference them in code.
+    # AWS_ACCESS_KEY_ID     — DevOpsIQ backend's own AWS access key
+    # AWS_SECRET_ACCESS_KEY — DevOpsIQ backend's own AWS secret key
+    # (Not declared as Settings fields — boto3 picks them up from the environment
+    #  directly, so we never accidentally log or serialize them via Pydantic.)
+
     # ── App ───────────────────────────────────────────────────────────────────
     app_env: str = "development"
     frontend_url: str = "http://localhost:5173"

@@ -13,11 +13,12 @@ import {
   Bot,
   LogOut,
   ChevronLeft,
+  Cloud,
   type LucideIcon,
 } from 'lucide-react';
 import { useAuth } from '@/context/useAuth';
 
-type Page = 'dashboard' | 'projects' | 'agents' | 'infrastructure' | 'pipelines' | 'deployments' | 'monitoring' | 'security' | 'cost' | 'automation' | 'insights' | 'reports' | 'settings';
+type Page = 'dashboard' | 'projects' | 'agents' | 'infrastructure' | 'pipelines' | 'deployments' | 'monitoring' | 'security' | 'cost' | 'automation' | 'insights' | 'reports' | 'settings' | 'cloud-accounts';
 
 interface SidebarProps {
   activePage: Page;
@@ -27,19 +28,20 @@ interface SidebarProps {
 }
 
 const navItems: { id: Page; label: string; icon: LucideIcon }[] = [
-  { id: 'dashboard', label: 'Overview', icon: LayoutDashboard },
-  { id: 'projects', label: 'Projects', icon: Server },
-  { id: 'infrastructure', label: 'Infrastructure', icon: Server },
-  { id: 'pipelines', label: 'Pipelines', icon: GitBranch },
-  { id: 'deployments', label: 'Deployments', icon: Rocket },
-  { id: 'monitoring', label: 'Monitoring', icon: Activity },
-  { id: 'agents', label: 'AI Agents', icon: Bot },
-  { id: 'security', label: 'Security', icon: Shield },
-  { id: 'cost', label: 'Cost Intelligence', icon: DollarSign },
-  { id: 'automation', label: 'Automation', icon: Zap },
-  { id: 'insights', label: 'AI Insights', icon: Lightbulb },
-  { id: 'reports', label: 'Reports', icon: FileText },
-  { id: 'settings', label: 'Settings', icon: Settings },
+  { id: 'dashboard',      label: 'Overview',          icon: LayoutDashboard },
+  { id: 'projects',       label: 'Projects',           icon: Server },
+  { id: 'cloud-accounts', label: 'Cloud Accounts',     icon: Cloud },
+  { id: 'infrastructure', label: 'Infrastructure',     icon: Server },
+  { id: 'pipelines',      label: 'Pipelines',          icon: GitBranch },
+  { id: 'deployments',    label: 'Deployments',        icon: Rocket },
+  { id: 'monitoring',     label: 'Monitoring',         icon: Activity },
+  { id: 'agents',         label: 'AI Agents',          icon: Bot },
+  { id: 'security',       label: 'Security',           icon: Shield },
+  { id: 'cost',           label: 'Cost Intelligence',  icon: DollarSign },
+  { id: 'automation',     label: 'Automation',         icon: Zap },
+  { id: 'insights',       label: 'AI Insights',        icon: Lightbulb },
+  { id: 'reports',        label: 'Reports',            icon: FileText },
+  { id: 'settings',       label: 'Settings',           icon: Settings },
 ];
 
 export default function Sidebar({ activePage, onNavigate, isOpen = true, onToggle }: SidebarProps) {

@@ -754,3 +754,9 @@ async def health():
 # without a circular import on main.
 from agent_routes import router as agent_router
 app.include_router(agent_router)
+
+# ── AWS Cloud Account connectivity API ───────────────────────────────────────
+# Imported at the bottom for the same reason as agent_routes (circular-import
+# avoidance — cloud_routes uses require_user from this module via a lazy import).
+from cloud_routes import router as cloud_router
+app.include_router(cloud_router)
