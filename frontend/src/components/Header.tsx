@@ -9,6 +9,7 @@ import CommandPalette from './CommandPalette';
 
 const roleLabels: Record<UserRole, string> = {
   user: 'User',
+  organization: 'Organization',
   developer: 'Developer',
   devops_engineer: 'DevOps',
   admin: 'Admin',
@@ -16,6 +17,7 @@ const roleLabels: Record<UserRole, string> = {
 
 const roleBadgeColors: Record<UserRole, string> = {
   user: 'bg-slate-100 text-slate-600 border-slate-200/80',
+  organization: 'bg-teal-50 text-teal-700 border-teal-200/80',
   developer: 'bg-blue-50 text-blue-700 border-blue-200/80',
   devops_engineer: 'bg-purple-50 text-purple-700 border-purple-200/80',
   admin: 'bg-amber-50 text-amber-700 border-amber-200/80',

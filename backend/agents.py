@@ -285,14 +285,27 @@ async def cicd_agent(state: AgentState) -> dict:
 
 
 async def architecture_agent(state: AgentState) -> dict:
-    _emit(state, "Architecture Agent", "Drafting architecture recommendations…")
+    _emit(state, "Architecture Agent", "Generating visual architecture diagram…")
     sys_prompt = (
-        "You are an Architecture AI Agent. Write 6-10 bullets with concrete "
-        "scalability / resilience recommendations for the project. Use the "
-        "ProjectDetails; flag any concerns (e.g. no DB detected, single tenant)."
+        "You are an Architecture AI Agent. Analyze the ProjectDetails and return a "
+        "JSON object that describes the system architecture as a visual graph.\n\n"
+        "The JSON must have exactly three keys:\n"
+        "  'nodes': array of objects with keys: id (string), label (string), "
+        "type (one of: service|database|cache|queue|gateway|storage|frontend|cdn|auth|monitoring), "
+        "description (short 1-line string)\n"
+        "  'edges': array of objects with keys: source (node id), target (node id), "
+        "label (short verb like 'reads', 'writes', 'calls', 'streams', 'auth')\n"
+        "  'notes': array of 5-8 short strings — concrete scalability / resilience "
+        "recommendations\n\n"
+        "Rules:\n"
+        "- Include every detected service, database, cache, queue, and external "
+        "dependency as a node\n"
+        "- Add an 'Internet / Client' gateway node as the entry point\n"
+        "- Connect nodes with realistic data-flow edges\n"
+        "- Return ONLY valid JSON — no code fences, no extra keys, no markdown"
     )
     user = _summary_block(state)
-    result = await _streamed_ask(state, "Architecture Agent", sys_prompt, user, max_tokens=900)
+    result = await _streamed_ask(state, "Architecture Agent", sys_prompt, user, max_tokens=1800)
     return {"architecture_notes": result, **_log(state, "Architecture Agent", result[:400])}
 
 
@@ -329,6 +342,35 @@ async def cost_agent(state: AgentState) -> dict:
     user = _summary_block(state) + "\nSTRATEGY=" + state["strategy"]
     result = await _streamed_ask(state, "Cost Agent", sys_prompt, user, max_tokens=900)
     return {"cost_estimate": result, **_log(state, "Cost Agent", result[:400])}
+
+
+def _parse_architecture(raw: str) -> dict:
+    """Parse the architecture_agent JSON output into a structured dict.
+
+    Returns a guaranteed-shape dict so the frontend always gets the same
+    schema.  Falls back gracefully when the LLM returns non-JSON.
+    """
+    _EMPTY: dict = {"nodes": [], "edges": [], "notes": []}
+    if not raw or not raw.strip():
+        return _EMPTY
+    # Strip accidental code fences the LLM may have added despite instructions
+    text = raw.strip()
+    if text.startswith("```"):
+        lines = text.splitlines()
+        text = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
+    try:
+        parsed = json.loads(text)
+        if not isinstance(parsed, dict):
+            raise ValueError("expected object")
+        # Normalise — ensure all three keys exist
+        return {
+            "nodes": parsed.get("nodes", []),
+            "edges": parsed.get("edges", []),
+            "notes": parsed.get("notes", []),
+        }
+    except Exception:
+        # Last-resort: wrap the raw text as a single note so nothing is lost
+        return {"nodes": [], "edges": [], "notes": [raw]}
 
 
 async def aggregate_results(state: AgentState) -> dict:
@@ -384,7 +426,7 @@ async def aggregate_results(state: AgentState) -> dict:
         "terraform": state.get("terraform_artifacts", ""),
         "kubernetes": state.get("kubernetes_artifacts", ""),
         "cicd": state.get("cicd_artifacts", ""),
-        "architecture": state.get("architecture_notes", ""),
+        "architecture": _parse_architecture(state.get("architecture_notes", "")),
         "monitoring": state.get("monitoring_config", ""),
         "security": state.get("security_config", ""),
         "cost_estimate": state.get("cost_estimate", ""),

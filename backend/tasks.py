@@ -170,7 +170,25 @@ def clone_repo(url: str) -> Path:
     base.mkdir(parents=True, exist_ok=True)
     target = base / _safe_slug(url)
     if target.exists():
-        shutil.rmtree(target, ignore_errors=True)
+        try:
+            shutil.rmtree(target)
+        except Exception:
+            # On Windows, locked files (git index, pack files) can prevent rmtree.
+            # Forcibly clear read-only flags and retry.
+            import stat
+
+            def _force_remove(func, path, _exc):
+                try:
+                    os.chmod(path, stat.S_IWRITE)
+                    func(path)
+                except Exception:
+                    pass
+
+            shutil.rmtree(target, onerror=_force_remove)
+        # If the directory still exists after both attempts, use a fresh slug
+        if target.exists():
+            import uuid
+            target = target.parent / (target.name + "_" + uuid.uuid4().hex[:6])
     try:
         Repo.clone_from(url, str(target), **_build_clone_kwargs())
     except Exception as exc:

@@ -11,8 +11,9 @@ import {
   listProjects, createProject, deleteProject, analyzeProject, getProject,
   streamProjectLogs, getProjectLogs, listDeployments, approveDeployment,
   uploadProjectFile, timeAgo, parseDate, ForbiddenError,
-  type Project, type DeploymentPlan, type LogEntry,
+  type Project, type DeploymentPlan, type LogEntry, type ArchitectureGraph,
 } from '@/api';
+import ArchitectureDiagram from '@/components/ArchitectureDiagram';
 
 // ── Upload constraints ──────────────────────────────────────────────────────
 const MAX_UPLOAD_MB = 150;
@@ -516,6 +517,35 @@ function ProjectDrawer({ project, onClose, onRefresh }: {
           ))}
         </div>
       );
+    }
+
+    // ── Tab: Architecture diagram ──
+    if (activeTab === 'architecture') {
+      const arch = plan.architecture;
+
+      // New structured graph format
+      if (arch && typeof arch === 'object' && 'nodes' in arch) {
+        return <ArchitectureDiagram graph={arch as ArchitectureGraph} />;
+      }
+
+      // Legacy plain-text fallback (old projects stored a string)
+      if (typeof arch === 'string' && arch.trim()) {
+        return (
+          <div className="relative">
+            <button
+              onClick={() => navigator.clipboard.writeText(arch)}
+              className="absolute top-2 right-2 px-2.5 py-1 rounded-lg bg-white/80 text-gray-500 text-[10px] font-medium hover:bg-white border border-gray-200 cursor-pointer transition-colors z-10"
+            >
+              Copy
+            </button>
+            <pre className="text-[11px] text-gray-700 bg-gray-50 rounded-xl p-4 overflow-x-auto overflow-y-auto max-h-[460px] whitespace-pre-wrap leading-relaxed">
+              {arch}
+            </pre>
+          </div>
+        );
+      }
+
+      return <p className="text-gray-400 text-sm text-center py-8">No architecture data.</p>;
     }
 
     // ── All other tabs: code/text artifact ──

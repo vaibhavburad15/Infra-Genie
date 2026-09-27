@@ -157,6 +157,39 @@ export interface DiscoveredApp {
   tech?: string;
 }
 
+// ── Architecture diagram types ───────────────────────────────────────────────
+
+export interface ArchNode {
+  id: string;
+  label: string;
+  /** Semantic category used for icon / colour in the diagram */
+  type:
+    | 'service'
+    | 'database'
+    | 'cache'
+    | 'queue'
+    | 'gateway'
+    | 'storage'
+    | 'frontend'
+    | 'cdn'
+    | 'auth'
+    | 'monitoring';
+  description?: string;
+}
+
+export interface ArchEdge {
+  source: string;
+  target: string;
+  label?: string;
+}
+
+export interface ArchitectureGraph {
+  nodes: ArchNode[];
+  edges: ArchEdge[];
+  /** Scalability / resilience recommendations */
+  notes: string[];
+}
+
 export interface DeploymentPlan {
   analysis?: ProjectAnalysis;
   discovered_apps?: DiscoveredApp[];
@@ -165,7 +198,8 @@ export interface DeploymentPlan {
   terraform?: string;
   kubernetes?: string;
   cicd?: string;
-  architecture?: string;
+  /** Structured graph (new) or plain-text string (legacy projects) */
+  architecture?: ArchitectureGraph | string;
   monitoring?: string;
   security?: string;
   cost_estimate?: string;
