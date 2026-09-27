@@ -589,7 +589,7 @@ class CloudAccountConnectResponse(BaseModel):
     external_id: str        # needed by the user to embed in CloudFormation
     role_name: str
     status: CloudAccountStatus
-    devopsiq_account_id: str
+    infragenie_account_id: str
     cloudformation_template: dict   # the full CFN template as JSON
 
 

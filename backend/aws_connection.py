@@ -24,12 +24,12 @@ Two service classes handle all AWS interaction:
 TESTING / PROTOTYPE NOTE
 ────────────────────────
 The CloudFormation template produced by generate_cloudformation_template()
-attaches the AWS managed policy AdministratorAccess to DevOpsIQExecutionRole.
+attaches the AWS managed policy AdministratorAccess to InfraGenieExecutionRole.
 
 THIS IS INTENTIONAL FOR THE PROTOTYPE / TESTING PHASE ONLY.
 After the full deployment workflow has been validated, replace
 AdministratorAccess with a custom least-privilege policy containing only
-the IAM actions that DevOpsIQ actually calls.
+the IAM actions that Infra Genie actually calls.
 
 The template is structured so the permission attachment is isolated in a
 dedicated "Permissions" section — search for "TESTING ONLY" to find the
@@ -63,8 +63,8 @@ logger = logging.getLogger(__name__)
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
-ROLE_NAME = "DevOpsIQExecutionRole"
-ROLE_SESSION_NAME = "DevOpsIQSession"
+ROLE_NAME = "InfraGenieExecutionRole"
+ROLE_SESSION_NAME = "InfraGenieSession"
 
 # Regex for a syntactically valid IAM role ARN.
 # Groups: (partition, account_id, role_name)
@@ -72,7 +72,7 @@ _ARN_RE = re.compile(
     r"^arn:(aws|aws-cn|aws-us-gov):iam::(\d{12}):role/(.+)$"
 )
 
-# AWS regions accepted by the UI.  Extend as DevOpsIQ supports more regions.
+# AWS regions accepted by the UI.  Extend as Infra Genie supports more regions.
 VALID_REGIONS: set[str] = {
     "ap-south-1", "ap-northeast-1", "ap-northeast-2", "ap-northeast-3",
     "ap-southeast-1", "ap-southeast-2",
@@ -160,9 +160,9 @@ class AWSSTSService:
             )
             raise AWSConnectionError.from_client_error(exc) from exc
         except botocore.exceptions.NoCredentialsError as exc:
-            logger.error("[AWS-STS] No credentials configured for DevOpsIQ backend: %s", exc)
+            logger.error("[AWS-STS] No credentials configured for Infra Genie backend: %s", exc)
             raise AWSConnectionError(
-                "DevOpsIQ backend has no AWS credentials configured. "
+                "Infra Genie backend has no AWS credentials configured. "
                 "Set AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY or use an instance role.",
                 error_code="NoCredentials",
             ) from exc
@@ -293,7 +293,7 @@ class AWSConnectionService:
         1. Matches ARN syntax.
         2. Is an IAM role ARN (not a user, group, etc.).
         3. Account ID in the ARN matches the stored account_id.
-        4. Role name is the expected DevOpsIQExecutionRole (configurable).
+        4. Role name is the expected InfraGenieExecutionRole (configurable).
 
         Raises ValueError with a descriptive message on any failure.
         """
@@ -312,112 +312,95 @@ class AWSConnectionService:
                 f"registered AWS Account ID '{expected_account_id}'."
             )
 
-        expected_role = settings.aws_role_name   # DevOpsIQExecutionRole
+        expected_role = settings.aws_role_name   # InfraGenieExecutionRole
         if arn_role_name != expected_role:
             raise ValueError(
                 f"Unexpected role name '{arn_role_name}'. "
-                f"DevOpsIQ expects the role to be named '{expected_role}'."
+                f"Infra Genie expects the role to be named '{expected_role}'."
             )
 
     # ── CloudFormation template ───────────────────────────────────────────────
 
     @staticmethod
     def generate_cloudformation_template(
-        devopsiq_account_id: str,
+        infragenie_account_id: str,
         external_id: str,
         role_name: str = ROLE_NAME,
     ) -> dict:
         """
-        Generate a parameterised AWS CloudFormation template (JSON) that
+        Generate a self-contained AWS CloudFormation template (JSON) that
         creates the cross-account IAM role in the customer's AWS account.
 
         The template is returned as a Python dict (JSON-serialisable).
 
+        All values (Infra Genie account ID, External ID, role name) are baked
+        directly into the template as literal strings — NO CloudFormation
+        parameters are used.  This means the user can upload the file and
+        click "Create Stack" immediately with zero manual input.
+
         Parameters
         ──────────
-        devopsiq_account_id
-            The AWS Account ID where DevOpsIQ is running.  Used to restrict
-            the trust policy so ONLY DevOpsIQ can assume the role.
+        infragenie_account_id
+            The AWS Account ID where Infra Genie is running.  Baked into the
+            trust policy Principal so only Infra Genie can assume the role.
         external_id
-            The unique External ID generated for this connection.  Embedded
-            as the sts:ExternalId condition in the trust policy.
+            The unique External ID generated for this connection.  Baked into
+            the trust policy Condition to prevent confused-deputy attacks.
         role_name
-            The name for the IAM role.  Defaults to DevOpsIQExecutionRole.
+            The name for the IAM role.  Defaults to InfraGenieExecutionRole.
 
         TESTING-ONLY PERMISSION
         ───────────────────────
-        The Policies section attaches AdministratorAccess.
+        The ManagedPolicyArns section attaches AdministratorAccess.
         This is INTENTIONAL for prototype/testing to validate the end-to-end
         workflow without permission failures.
 
         TO MIGRATE TO PRODUCTION:
-        Replace the ManagedPolicyArns entry
-            arn:aws:iam::aws:policy/AdministratorAccess
-        with your custom least-privilege policy ARN, e.g.:
-            arn:aws:iam::<DEVOPSIQ_ACCOUNT_ID>:policy/DevOpsIQLeastPrivilegePolicy
+        Replace the AdministratorAccess ARN with your custom least-privilege
+        policy ARN:
+            arn:aws:iam::<infragenie_account_id>:policy/InfraGenieLeastPrivilegePolicy
 
         Search for "TESTING ONLY" in this file to find all relevant places.
         """
+        # Trust policy principal — hardcoded literal, no CFN Fn::Sub needed
+        principal_arn = f"arn:aws:iam::{infragenie_account_id}:root"
+
         return {
             "AWSTemplateFormatVersion": "2010-09-09",
             "Description": (
-                "DevOpsIQ Cross-Account IAM Role. "
-                "Creates DevOpsIQExecutionRole that trusts the DevOpsIQ AWS account "
-                "and uses the External ID condition to prevent confused-deputy attacks. "
-                "NOTE: AdministratorAccess is attached for TESTING ONLY. "
-                "Replace with a least-privilege policy before production use."
+                f"Infra Genie Cross-Account IAM Role for AWS account connection. "
+                f"Creates {role_name} trusting Infra Genie account "
+                f"{infragenie_account_id} with External ID {external_id}. "
+                f"AdministratorAccess attached — TESTING ONLY. "
+                f"Replace with least-privilege policy before production use."
             ),
-            "Parameters": {
-                "DevOpsIQAccountId": {
-                    "Type": "String",
-                    "Default": devopsiq_account_id,
-                    "Description": "AWS Account ID where DevOpsIQ backend is running.",
-                },
-                "ExternalId": {
-                    "Type": "String",
-                    "Default": external_id,
-                    "Description": (
-                        "Unique External ID generated by DevOpsIQ for this connection. "
-                        "Must match the value stored in DevOpsIQ."
-                    ),
-                },
-                "RoleName": {
-                    "Type": "String",
-                    "Default": role_name,
-                    "Description": "Name for the cross-account IAM role.",
-                },
-            },
             "Resources": {
-                "DevOpsIQExecutionRole": {
+                "InfraGenieExecutionRole": {
                     "Type": "AWS::IAM::Role",
                     "Properties": {
-                        "RoleName": {"Ref": "RoleName"},
+                        "RoleName": role_name,
                         "Description": (
-                            "Cross-account role assumed by DevOpsIQ to manage "
+                            "Cross-account role assumed by Infra Genie to manage "
                             "infrastructure in this AWS account."
                         ),
                         # ── Trust policy ──────────────────────────────────────
-                        # ONLY the DevOpsIQ AWS account may assume this role,
+                        # ONLY Infra Genie's AWS account may assume this role,
                         # AND only when it supplies the correct External ID.
-                        # Do NOT change Principal to "*" — that would allow any
-                        # AWS account to assume this role.
+                        # Values are baked in as literals — no parameters needed.
+                        # Do NOT change Principal to "*".
                         "AssumeRolePolicyDocument": {
                             "Version": "2012-10-17",
                             "Statement": [
                                 {
-                                    "Sid": "AllowDevOpsIQAssumeRole",
+                                    "Sid": "AllowInfraGenieAssumeRole",
                                     "Effect": "Allow",
                                     "Principal": {
-                                        "AWS": {
-                                            "Fn::Sub": (
-                                                "arn:aws:iam::${DevOpsIQAccountId}:root"
-                                            )
-                                        }
+                                        "AWS": principal_arn   # literal, e.g. "arn:aws:iam::111111111111:root"
                                     },
                                     "Action": "sts:AssumeRole",
                                     "Condition": {
                                         "StringEquals": {
-                                            "sts:ExternalId": {"Ref": "ExternalId"}
+                                            "sts:ExternalId": external_id   # literal UUID
                                         }
                                     },
                                 }
@@ -429,21 +412,18 @@ class AWSConnectionService:
                         # validated without permission failures.
                         #
                         # PRODUCTION MIGRATION:
-                        # Replace the AdministratorAccess ARN below with the ARN
-                        # of your custom DevOpsIQLeastPrivilegePolicy.  That
-                        # policy should contain only the IAM actions that
-                        # DevOpsIQ actually calls (EC2, EKS, S3, IAM read,
-                        # CloudFormation, etc.).  Create the policy AFTER the
-                        # complete deployment workflow is tested so you know the
-                        # exact set of actions needed.
+                        # Replace the entry below with the ARN of your custom
+                        # InfraGenieLeastPrivilegePolicy once all required
+                        # IAM actions are known after full workflow testing.
                         "ManagedPolicyArns": [
                             "arn:aws:iam::aws:policy/AdministratorAccess"
                             # TESTING ONLY ↑ — replace with least-privilege ARN in production
                         ],
                         "Tags": [
-                            {"Key": "ManagedBy", "Value": "DevOpsIQ"},
-                            {"Key": "Purpose", "Value": "CrossAccountAccess"},
-                            {"Key": "ExternalId", "Value": {"Ref": "ExternalId"}},
+                            {"Key": "ManagedBy",       "Value": "InfraGenie"},
+                            {"Key": "Purpose",         "Value": "CrossAccountAccess"},
+                            {"Key": "InfraGenieAccount", "Value": infragenie_account_id},
+                            {"Key": "ExternalId",      "Value": external_id},
                             {
                                 "Key": "PermissionNote",
                                 "Value": (
@@ -457,13 +437,12 @@ class AWSConnectionService:
             },
             "Outputs": {
                 "RoleArn": {
-                    "Description": "ARN of the DevOpsIQ cross-account IAM role.",
-                    "Value": {"Fn::GetAtt": ["DevOpsIQExecutionRole", "Arn"]},
-                    "Export": {"Name": {"Fn::Sub": "${AWS::StackName}-RoleArn"}},
+                    "Description": "ARN of the Infra Genie Cross-Account IAM Role. Paste this back into Infra Genie to complete the connection.",
+                    "Value": {"Fn::GetAtt": ["InfraGenieExecutionRole", "Arn"]},
                 },
                 "RoleName": {
-                    "Description": "Name of the DevOpsIQ cross-account IAM role.",
-                    "Value": {"Ref": "DevOpsIQExecutionRole"},
+                    "Description": "Name of the Infra Genie Cross-Account IAM Role.",
+                    "Value": {"Ref": "InfraGenieExecutionRole"},
                 },
             },
         }
@@ -673,10 +652,10 @@ class AWSConnectionService:
 
         IMPORTANT: This does NOT delete the IAM role from the customer's AWS
         account.  The user must manually delete the CloudFormation stack
-        (named DevOpsIQ-CrossAccount-<account_id>) from their AWS console if
-        they want to fully revoke DevOpsIQ's access.
+        (named Infra Genie-CrossAccount-<account_id>) from their AWS console if
+        they want to fully revoke Infra Genie's access.
 
-        Why soft-delete?  Deleting the CFN stack from within DevOpsIQ would
+        Why soft-delete?  Deleting the CFN stack from within Infra Genie would
         require an additional AssumeRole call and adds risk.  The explicit
         instruction to the user is safer and more transparent.
         """
@@ -708,12 +687,12 @@ class AWSConnectionError(Exception):
     _CODE_MAP: dict[str, str] = {
         "AccessDenied": (
             "AWS role assumption was denied. "
-            "Verify the IAM trust policy allows DevOpsIQ's account "
+            "Verify the IAM trust policy allows Infra Genie's account "
             "and the External ID matches exactly."
         ),
         "AccessDeniedException": (
             "AWS role assumption was denied. "
-            "Verify the IAM trust policy allows DevOpsIQ's account "
+            "Verify the IAM trust policy allows Infra Genie's account "
             "and the External ID matches exactly."
         ),
         "InvalidClientTokenId": "AWS authentication failed. The credentials may be invalid.",
@@ -723,13 +702,13 @@ class AWSConnectionError(Exception):
         "MalformedPolicyDocument": "The IAM trust policy is invalid.",
         "ValidationError": "The AWS CloudFormation/IAM configuration is invalid.",
         "NoSuchEntity": (
-            "DevOpsIQExecutionRole was not found in the customer's account. "
+            "InfraGenieExecutionRole was not found in the customer's account. "
             "Complete the CloudFormation setup first, then click Verify."
         ),
         "EntityAlreadyExists": "The IAM role already exists in the target account.",
         "TokenRefreshRequired": "AWS token refresh required. Please reconnect.",
         "UnauthorizedOperation": (
-            "DevOpsIQ is not authorised to perform this operation. "
+            "Infra Genie is not authorised to perform this operation. "
             "Check the IAM role permissions."
         ),
     }

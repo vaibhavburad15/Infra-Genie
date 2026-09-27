@@ -136,7 +136,7 @@ function AccountCard({
       <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs mb-4">
         {[
           ['Region', account.region],
-          ['Role', account.role_arn ? 'DevOpsIQExecutionRole' : '—'],
+          ['Role', account.role_arn ? 'InfraGenieExecutionRole' : '—'],
           ['Connected', formatDate(account.created_at)],
           ['Last verified', formatDate(account.last_verified_at)],
         ].map(([label, value]) => (
@@ -245,7 +245,7 @@ export default function CloudAccountsPage() {
     if (!account) return;
     if (!window.confirm(
       `Disconnect AWS account ${account.account_id}?\n\n` +
-      'This removes the connection from DevOpsIQ. ' +
+      'This removes the connection from Infra Genie. ' +
       'To fully revoke access, also delete the CloudFormation stack in your AWS console.'
     )) return;
 
@@ -401,7 +401,7 @@ export default function CloudAccountsPage() {
                 {
                   step: '3',
                   title: 'Verify & Connect',
-                  desc: 'DevOpsIQ verifies access via STS AssumeRole and marks your account connected.',
+                  desc: 'Infra Genie verifies access via STS AssumeRole and marks your account connected.',
                 },
               ].map(({ step, title, desc }) => (
                 <div key={step} className="bg-white rounded-xl border border-slate-100 p-4">
@@ -450,7 +450,7 @@ export default function CloudAccountsPage() {
         <div className="bg-slate-50 border border-slate-100 rounded-xl p-4 text-xs text-slate-500 flex gap-2">
           <AlertTriangle size={14} className="shrink-0 mt-0.5 text-slate-400" />
           <p>
-            <strong className="text-slate-600">Security:</strong> DevOpsIQ never stores
+            <strong className="text-slate-600">Security:</strong> Infra Genie never stores
             your AWS access keys or secret keys. All access uses temporary STS credentials
             obtained via cross-account IAM role assumption with a unique External ID per
             connection. Temporary credentials are used in-memory only and are never logged

@@ -1,7 +1,7 @@
 /**
  * AWSConnectWizard.tsx
  *
- * Multi-step wizard for connecting a customer AWS account to DevOpsIQ.
+ * Multi-step wizard for connecting a customer AWS account to Infra Genie.
  *
  * Step 0 — Entry form:        Enter AWS Account ID + Region
  * Step 1 — CloudFormation:    Display External ID, CFN template download,
@@ -192,17 +192,10 @@ export default function AWSConnectWizard({ onConnected, onCancel }: AWSConnectWi
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `devopsiq-crossaccount-role-${connectData.account_id}.json`;
+    a.download = `infragenie-crossaccount-role-${connectData.account_id}.json`;
     a.click();
     URL.revokeObjectURL(url);
   };
-
-  // Build the AWS CloudFormation console launch URL
-  const cfnLaunchUrl = connectData
-    ? `https://${connectData.region}.console.aws.amazon.com/cloudformation/home` +
-      `?region=${connectData.region}#/stacks/create/review` +
-      `?templateURL=` // Template URL would need S3 hosting; fallback to manual upload
-    : '';
 
   // ── Render ────────────────────────────────────────────────────────────────
 
@@ -245,7 +238,7 @@ export default function AWSConnectWizard({ onConnected, onCancel }: AWSConnectWi
           <div className="space-y-5">
             <div>
               <p className="text-slate-600 text-sm mb-4">
-                Enter your AWS Account ID and preferred region. DevOpsIQ will generate a
+                Enter your AWS Account ID and preferred region. Infra Genie will generate a
                 unique External ID and a CloudFormation template to create the cross-account
                 IAM role in your account.
               </p>
@@ -253,7 +246,7 @@ export default function AWSConnectWizard({ onConnected, onCancel }: AWSConnectWi
                 <AlertTriangle size={16} className="shrink-0 mt-0.5 text-amber-500" />
                 <span>
                   You will <strong>never</strong> be asked for your AWS root credentials,
-                  access keys, or secret keys. DevOpsIQ uses a cross-account IAM role.
+                  access keys, or secret keys. Infra Genie uses a cross-account IAM role.
                 </span>
               </div>
             </div>
@@ -343,18 +336,18 @@ export default function AWSConnectWizard({ onConnected, onCancel }: AWSConnectWi
         {step === 1 && connectData && (
           <div className="space-y-5">
             <p className="text-slate-600 text-sm">
-              Deploy the CloudFormation template below in your AWS account{' '}
-              <strong>{connectData.account_id}</strong>. This creates the{' '}
+              Download the CloudFormation template and deploy it in your AWS account{' '}
+              <strong>{connectData.account_id}</strong>. It creates the{' '}
               <code className="bg-slate-100 px-1.5 py-0.5 rounded text-xs font-mono">
-                DevOpsIQExecutionRole
+                InfraGenieExecutionRole
               </code>{' '}
-              IAM role that allows DevOpsIQ to manage your infrastructure.
+              IAM role — everything is pre-configured, no fields to fill in.
             </p>
 
-            {/* External ID */}
+            {/* External ID info */}
             <div className="bg-slate-50 border border-slate-200 rounded-xl p-4">
               <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">
-                Your Unique External ID
+                Your Unique External ID (already baked into the template)
               </p>
               <div className="flex items-center">
                 <code className="text-sm font-mono text-[#1e3a7a] break-all">
@@ -363,59 +356,95 @@ export default function AWSConnectWizard({ onConnected, onCancel }: AWSConnectWi
                 <CopyButton text={connectData.external_id} />
               </div>
               <p className="text-xs text-slate-400 mt-2">
-                This ID is already embedded in the CloudFormation template below.
-                It ensures only DevOpsIQ can assume the role.
+                This ID is hardcoded in the template's trust policy. It ensures only
+                Infra Genie can assume the role.
               </p>
             </div>
 
-            {/* CFN Actions */}
+            {/* Primary action — download first, then open console */}
             <div className="space-y-3">
-              <p className="text-sm font-semibold text-slate-700">
-                Step 1 — Create the IAM role in your AWS account:
+              {/* Step A: Download */}
+              <div className="bg-white border-2 border-[#1e3a7a] rounded-xl p-4">
+                <div className="flex items-start gap-3">
+                  <div className="w-7 h-7 rounded-full bg-[#1e3a7a] text-white text-xs font-bold flex items-center justify-center shrink-0 mt-0.5">
+                    1
+                  </div>
+                  <div className="flex-1">
+                    <p className="text-sm font-semibold text-slate-700 mb-1">
+                      Download the CloudFormation template
+                    </p>
+                    <p className="text-xs text-slate-500 mb-3">
+                      A JSON file with all values pre-filled — no editing required.
+                    </p>
+                    <button
+                      onClick={handleDownloadTemplate}
+                      className="flex items-center gap-2 px-4 py-2.5 bg-[#1e3a7a] text-white rounded-xl text-sm font-semibold hover:bg-[#2d52a8] transition-colors"
+                    >
+                      <Download size={15} />
+                      Download infragenie-crossaccount-role.json
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Step B: Open CloudFormation */}
+              <div className="bg-white border border-slate-200 rounded-xl p-4">
+                <div className="flex items-start gap-3">
+                  <div className="w-7 h-7 rounded-full bg-[#FF9900] text-white text-xs font-bold flex items-center justify-center shrink-0 mt-0.5">
+                    2
+                  </div>
+                  <div className="flex-1">
+                    <p className="text-sm font-semibold text-slate-700 mb-1">
+                      Deploy in your AWS account
+                    </p>
+                    <p className="text-xs text-slate-500 mb-3">
+                      Open CloudFormation in <strong>{connectData.region}</strong>, upload the
+                      downloaded file, give the stack a name (e.g.{' '}
+                      <code className="bg-slate-100 px-1 rounded font-mono">
+                        InfraGenie-CrossAccount
+                      </code>
+                      ), then click through and hit <strong>Submit</strong>.
+                    </p>
+                    <a
+                      href={`https://${connectData.region}.console.aws.amazon.com/cloudformation/home?region=${connectData.region}#/stacks/create`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-2 px-4 py-2.5 bg-[#FF9900] text-white rounded-xl text-sm font-semibold hover:bg-[#e68a00] transition-colors"
+                    >
+                      <ExternalLink size={15} />
+                      Open CloudFormation ({connectData.region})
+                    </a>
+                  </div>
+                </div>
+              </div>
+
+              {/* Step C: Copy RoleArn */}
+              <div className="bg-white border border-slate-200 rounded-xl p-4">
+                <div className="flex items-start gap-3">
+                  <div className="w-7 h-7 rounded-full bg-slate-600 text-white text-xs font-bold flex items-center justify-center shrink-0 mt-0.5">
+                    3
+                  </div>
+                  <div className="flex-1">
+                    <p className="text-sm font-semibold text-slate-700 mb-1">
+                      After stack reaches CREATE_COMPLETE
+                    </p>
+                    <p className="text-xs text-slate-500">
+                      Go to your stack → <strong>Outputs</strong> tab → copy the{' '}
+                      <strong>RoleArn</strong> value. You'll paste it on the next screen.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Testing-only notice */}
+            <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-800">
+              <p className="font-semibold mb-1">⚠️ Testing / Prototype Notice</p>
+              <p>
+                The template attaches <strong>AdministratorAccess</strong> to the IAM role.
+                This is intentional for prototype testing only. Before production use,
+                this will be replaced with a least-privilege custom policy.
               </p>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <button
-                  onClick={handleDownloadTemplate}
-                  className="flex items-center justify-center gap-2 px-4 py-3 border-2 border-[#1e3a7a] text-[#1e3a7a] rounded-xl text-sm font-semibold hover:bg-[#1e3a7a]/5 transition-colors"
-                >
-                  <Download size={16} />
-                  Download CFN Template
-                </button>
-                <a
-                  href={`https://${connectData.region}.console.aws.amazon.com/cloudformation/home?region=${connectData.region}#/stacks/create`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-center justify-center gap-2 px-4 py-3 bg-[#FF9900] text-white rounded-xl text-sm font-semibold hover:bg-[#e68a00] transition-colors"
-                >
-                  <ExternalLink size={16} />
-                  Open CloudFormation Console
-                </a>
-              </div>
-
-              <div className="bg-blue-50 border border-blue-100 rounded-xl p-3 text-sm text-blue-800 space-y-1">
-                <p className="font-semibold">How to launch the stack:</p>
-                <ol className="list-decimal list-inside space-y-1 text-xs">
-                  <li>Download the CloudFormation template above.</li>
-                  <li>Open the AWS CloudFormation console in your account.</li>
-                  <li>Click <strong>Create stack → With new resources</strong>.</li>
-                  <li>Choose <strong>Upload a template file</strong> and upload the downloaded JSON.</li>
-                  <li>Accept the default parameter values (they include your External ID).</li>
-                  <li>Click through and create the stack.</li>
-                  <li>Wait for the stack status to reach <strong>CREATE_COMPLETE</strong>.</li>
-                  <li>Copy the <strong>RoleArn</strong> from the stack Outputs tab.</li>
-                </ol>
-              </div>
-
-              {/* Testing-only notice */}
-              <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-800">
-                <p className="font-semibold mb-1">⚠️ Testing / Prototype Notice</p>
-                <p>
-                  The template attaches <strong>AdministratorAccess</strong> to the IAM role.
-                  This is intentional for prototype testing only. Before production use,
-                  this will be replaced with a least-privilege custom policy.
-                </p>
-              </div>
             </div>
 
             <div className="flex gap-3 pt-2">
@@ -429,7 +458,7 @@ export default function AWSConnectWizard({ onConnected, onCancel }: AWSConnectWi
                 onClick={() => setStep(2)}
                 className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-[#1e3a7a] text-white text-sm font-semibold hover:bg-[#2d52a8] transition-colors"
               >
-                I've created the stack — Continue <ChevronRight size={15} />
+                Stack created — enter Role ARN <ChevronRight size={15} />
               </button>
             </div>
           </div>
@@ -469,7 +498,7 @@ export default function AWSConnectWizard({ onConnected, onCancel }: AWSConnectWi
                   type="text"
                   value={roleArn}
                   onChange={(e) => { setRoleArn(e.target.value); setStep2Error(''); }}
-                  placeholder={`arn:aws:iam::${connectData.account_id}:role/DevOpsIQExecutionRole`}
+                  placeholder={`arn:aws:iam::${connectData.account_id}:role/InfraGenieExecutionRole`}
                   className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a7a]/30 focus:border-[#1e3a7a] transition-all font-mono"
                 />
                 <p className="text-xs text-slate-400 mt-1">
@@ -517,7 +546,7 @@ export default function AWSConnectWizard({ onConnected, onCancel }: AWSConnectWi
               <div>
                 <h3 className="text-xl font-bold text-slate-800">AWS Account Connected!</h3>
                 <p className="text-slate-500 text-sm mt-1">
-                  DevOpsIQ can now manage infrastructure in your AWS account.
+                  Infra Genie can now manage infrastructure in your AWS account.
                 </p>
               </div>
             </div>
@@ -526,7 +555,7 @@ export default function AWSConnectWizard({ onConnected, onCancel }: AWSConnectWi
               {[
                 ['Account ID', connectedAccount.account_id],
                 ['Region',     connectedAccount.region],
-                ['Role',       'DevOpsIQExecutionRole'],
+                ['Role',       'InfraGenieExecutionRole'],
                 ['Status',     '🟢 Connected'],
               ].map(([label, value]) => (
                 <div key={label} className="flex items-center justify-between">

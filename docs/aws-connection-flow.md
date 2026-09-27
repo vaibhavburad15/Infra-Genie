@@ -1,14 +1,14 @@
 # AWS Account Connection — Sequence Flow
 
 Complete end-to-end sequence diagrams for the AWS cross-account connection
-workflow in DevOpsIQ.
+workflow in Infra Genie.
 
 ---
 
 ## 1. Full Connection Flow
 
 ```
-User                DevOpsIQ Frontend        FastAPI Backend         AWS (Customer Account)
+User                Infra Genie Frontend        FastAPI Backend         AWS (Customer Account)
  │                        │                        │                          │
  │  Enter Account ID       │                        │                          │
  │  + Region               │                        │                          │
@@ -46,9 +46,9 @@ User                DevOpsIQ Frontend        FastAPI Backend         AWS (Custom
  │  Create stack           │                        │                          │
  │─────────────────────────────────────────────────────────────────────────►│
  │                        │                        │  CloudFormation creates  │
- │                        │                        │  DevOpsIQExecutionRole   │
+ │                        │                        │  InfraGenieExecutionRole   │
  │                        │                        │  with:                   │
- │                        │                        │  • Trust: DevOpsIQ       │
+ │                        │                        │  • Trust: Infra Genie       │
  │                        │                        │    account only          │
  │                        │                        │  • Condition: ExternalId │
  │                        │                        │  • Policy: AdminAccess   │
@@ -61,7 +61,7 @@ User                DevOpsIQ Frontend        FastAPI Backend         AWS (Custom
  │  (from CFN Outputs tab) │                        │                          │
  │                        │                        │                          │
  │  Paste RoleArn          │                        │                          │
- │  in DevOpsIQ Step 2     │                        │                          │
+ │  in Infra Genie Step 2     │                        │                          │
  ├───────────────────────►│                        │                          │
  │                        │  POST /api/cloud/aws/  │                          │
  │                        │  {id}/verify           │                          │
@@ -90,7 +90,7 @@ FastAPI Backend                  AWS STS                   Customer AWS Account
        │  )                           │                              │
        ├─────────────────────────────►│                              │
        │                              │  Validate Principal          │
-       │                              │  (DevOpsIQ Account ID?)      │
+       │                              │  (Infra Genie Account ID?)      │
        │                              │  Validate ExternalId         │
        │                              │  (matches trust policy?)     │
        │                              ├─────────────────────────────►│
@@ -137,7 +137,7 @@ FastAPI Backend                  AWS STS                   Customer AWS Account
 ## 3. Success Response Flow
 
 ```
-FastAPI Backend        DevOpsIQ Frontend              User
+FastAPI Backend        Infra Genie Frontend              User
        │                        │                       │
        │  {                     │                       │
        │    status: CONNECTED,  │                       │
@@ -151,7 +151,7 @@ FastAPI Backend        DevOpsIQ Frontend              User
        │                        │  ✅ Connected!         │
        │                        │  Account: 222…        │
        │                        │  Region: ap-south-1   │
-       │                        │  Role: DevOpsIQExec…  │
+       │                        │  Role: InfraGenieExec… │
        │                        ├──────────────────────►│
        │                        │                       │  Click "Done"
        │                        │◄──────────────────────┤
@@ -165,7 +165,7 @@ FastAPI Backend        DevOpsIQ Frontend              User
 ## 4. Failure Flow
 
 ```
-FastAPI Backend        DevOpsIQ Frontend              User
+FastAPI Backend        Infra Genie Frontend              User
        │                        │                       │
        │  STS returns            │                       │
        │  AccessDenied           │                       │
@@ -200,7 +200,7 @@ FastAPI Backend        DevOpsIQ Frontend              User
 ## 5. Disconnect Flow
 
 ```
-User             DevOpsIQ Frontend        FastAPI Backend
+User             Infra Genie Frontend        FastAPI Backend
  │                       │                       │
  │  Click "Disconnect"   │                       │
  ├──────────────────────►│                       │
@@ -208,7 +208,7 @@ User             DevOpsIQ Frontend        FastAPI Backend
  │◄──────────────────────┤                       │
  │  "This removes the    │                       │
  │   connection from     │                       │
- │   DevOpsIQ. Delete    │                       │
+ │   Infra Genie. Delete    │                       │
  │   the CFN stack to    │                       │
  │   fully revoke…"      │                       │
  │                       │                       │
@@ -275,7 +275,7 @@ User             DevOpsIQ Frontend        FastAPI Backend
 
 ```
                     ┌─────────────────────────────────────────┐
-                    │            DevOpsIQ System               │
+                    │            Infra Genie System               │
                     │                                          │
                     │  Frontend (Browser)                      │
                     │  ┌────────────────────────────────────┐  │
@@ -298,8 +298,8 @@ User             DevOpsIQ Frontend        FastAPI Backend
                     ┌──────────────────▼──────────────────────┐
                     │        Customer AWS Account              │
                     │                                          │
-                    │  DevOpsIQExecutionRole                   │
-                    │  • Trust: DevOpsIQ account only          │
+                    │  InfraGenieExecutionRole                   │
+                    │  • Trust: Infra Genie account only          │
                     │  • Condition: ExternalId match required  │
                     │  • Policy: AdministratorAccess (testing) │
                     │                                          │
