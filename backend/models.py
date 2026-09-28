@@ -98,6 +98,13 @@ async def init_db():
             "CREATE INDEX IF NOT EXISTS ix_cloud_accounts_user_provider "
             "ON cloud_accounts (user_id, provider)"
         ))
+        # AWS Discovery columns (added in v4)
+        await conn.execute(text(
+            "ALTER TABLE cloud_accounts ADD COLUMN IF NOT EXISTS "
+            "discovery_result JSON"))
+        await conn.execute(text(
+            "ALTER TABLE cloud_accounts ADD COLUMN IF NOT EXISTS "
+            "discovery_ran_at TIMESTAMP"))
         # Remove subscription-related columns and table (idempotent)
         await conn.execute(text(
             "DROP TABLE IF EXISTS subscriptions CASCADE"))
@@ -306,6 +313,9 @@ class CloudAccount(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     last_verified_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    # AWS Discovery (added v4)
+    discovery_result: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON, nullable=True)
+    discovery_ran_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
     user: Mapped["User"] = relationship("User")
 
@@ -571,10 +581,21 @@ class CloudAccountOut(BaseModel):
     created_at: datetime
     updated_at: Optional[datetime]
     last_verified_at: Optional[datetime]
+    # Discovery metadata (summary only — not the full result)
+    discovery_ran_at: Optional[datetime] = None
+    discovery_summary: Optional[dict] = None
 
-    @field_serializer("created_at", "updated_at", "last_verified_at", mode="plain")
+    @field_serializer("created_at", "updated_at", "last_verified_at", "discovery_ran_at", mode="plain")
     def serialize_dates(self, v: Optional[datetime]) -> Optional[str]:
         return serialize_utc_datetime(v)
+
+    @classmethod
+    def from_orm_with_summary(cls, record: "CloudAccount") -> "CloudAccountOut":
+        """Build CloudAccountOut, extracting just the summary from discovery_result."""
+        obj = cls.model_validate(record)
+        if record.discovery_result and isinstance(record.discovery_result, dict):
+            obj.discovery_summary = record.discovery_result.get("summary")
+        return obj
 
     class Config:
         from_attributes = True

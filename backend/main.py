@@ -760,3 +760,9 @@ app.include_router(agent_router)
 # avoidance — cloud_routes uses require_user from this module via a lazy import).
 from cloud_routes import router as cloud_router
 app.include_router(cloud_router)
+
+# ── AWS Discovery API ─────────────────────────────────────────────────────────
+# Deterministic read-only AWS scanner — no LLM involved.
+# Discovers VPCs, subnets, EC2, EKS, RDS, S3, load balancers, IAM, ECR.
+from discovery_routes import router as discovery_router
+app.include_router(discovery_router)

@@ -169,6 +169,8 @@ export default function AWSConnectWizard({ onConnected, onCancel }: AWSConnectWi
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
           last_verified_at: result.last_verified_at ?? new Date().toISOString(),
+          discovery_ran_at: null,
+          discovery_summary: null,
         };
         setConnectedAccount(account);
         setStep(3);

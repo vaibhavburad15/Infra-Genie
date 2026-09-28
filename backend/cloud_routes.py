@@ -235,7 +235,7 @@ async def list_aws_connections(
     records = await aws_connection_service.list_connections(
         db=db, user_id=current_user.id
     )
-    return [CloudAccountOut.model_validate(r) for r in records]
+    return [CloudAccountOut.from_orm_with_summary(r) for r in records]
 
 
 # ── DELETE /api/cloud/aws/{connection_id} ─────────────────────────────────────

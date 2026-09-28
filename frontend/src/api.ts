@@ -612,7 +612,7 @@ export interface CloudAccountConnectResponse {
   external_id: string;
   role_name: string;
   status: CloudAccountStatus;
-  devopsiq_account_id: string;
+  infragenie_account_id: string;
   cloudformation_template: CloudFormationTemplate;
 }
 
@@ -627,6 +627,9 @@ export interface CloudAccountOut {
   created_at: string;
   updated_at: string | null;
   last_verified_at: string | null;
+  // Discovery metadata
+  discovery_ran_at: string | null;
+  discovery_summary: DiscoverySummary | null;
 }
 
 export interface CloudAccountVerifyRequest {
@@ -679,12 +682,177 @@ export async function listAWSConnections(): Promise<CloudAccountOut[]> {
   return request<CloudAccountOut[]>('/api/cloud/aws');
 }
 
-/** Soft-disconnect — removes the DevOpsIQ record, does NOT delete the IAM role. */
+/** Soft-disconnect — removes the Infra Genie record, does NOT delete the IAM role. */
 export async function disconnectAWSAccount(
   connectionId: string,
 ): Promise<CloudAccountDisconnectResponse> {
   return request<CloudAccountDisconnectResponse>(
     `/api/cloud/aws/${encodeURIComponent(connectionId)}`,
     { method: 'DELETE' },
+  );
+}
+
+// ── AWS Discovery ─────────────────────────────────────────────────────────────
+
+export interface DiscoverySummary {
+  vpc_count: number;
+  subnet_count: number;
+  security_group_count: number;
+  ec2_instance_count: number;
+  ec2_by_state: Record<string, number>;
+  load_balancer_count: number;
+  lb_by_type: Record<string, number>;
+  eks_cluster_count: number;
+  rds_instance_count: number;
+  rds_by_engine: Record<string, number>;
+  s3_bucket_count: number;
+  ecr_repo_count: number;
+  iam_role_count: number;
+  nat_gateway_count: number;
+  igw_count: number;
+}
+
+export interface DiscoveryVpc {
+  vpc_id: string;
+  cidr: string;
+  is_default: boolean;
+  state: string;
+  name: string;
+}
+
+export interface DiscoverySubnet {
+  subnet_id: string;
+  vpc_id: string;
+  cidr: string;
+  availability_zone: string;
+  available_ip_count: number;
+  map_public_ip_on_launch: boolean;
+  state: string;
+  name: string;
+}
+
+export interface DiscoverySecurityGroup {
+  sg_id: string;
+  name: string;
+  description: string;
+  vpc_id: string;
+  inbound: Array<{ protocol: string; from_port: number | null; to_port: number | null; cidr_ranges: string[] }>;
+  outbound: Array<{ protocol: string; from_port: number | null; to_port: number | null; cidr_ranges: string[] }>;
+}
+
+export interface DiscoveryEC2Instance {
+  instance_id: string;
+  instance_type: string;
+  state: string;
+  vpc_id: string;
+  subnet_id: string;
+  private_ip: string;
+  public_ip: string;
+  name: string;
+  launch_time: string;
+}
+
+export interface DiscoveryEKSCluster {
+  cluster_name: string;
+  arn: string;
+  status: string;
+  kubernetes_version: string;
+  endpoint: string;
+  vpc_id: string;
+  subnet_ids: string[];
+  endpoint_public_access: boolean;
+  endpoint_private_access: boolean;
+}
+
+export interface DiscoveryRDSInstance {
+  db_identifier: string;
+  db_class: string;
+  engine: string;
+  engine_version: string;
+  status: string;
+  multi_az: boolean;
+  endpoint_address: string;
+  endpoint_port: number;
+  publicly_accessible: boolean;
+  storage_encrypted: boolean;
+}
+
+export interface DiscoveryLoadBalancer {
+  name: string;
+  type: string;
+  scheme: string;
+  state: string;
+  dns_name: string;
+  vpc_id: string;
+}
+
+export interface DiscoveryS3Bucket {
+  name: string;
+  created_at: string;
+  region: string | null;
+}
+
+export interface DiscoveryIAMRole {
+  role_name: string;
+  role_arn: string;
+  path: string;
+  description: string;
+}
+
+export interface DiscoveryResult {
+  account_id: string;
+  region: string;
+  discovered_at: string;
+  vpcs: DiscoveryVpc[];
+  subnets: DiscoverySubnet[];
+  route_tables: unknown[];
+  internet_gateways: unknown[];
+  nat_gateways: unknown[];
+  security_groups: DiscoverySecurityGroup[];
+  ec2_instances: DiscoveryEC2Instance[];
+  load_balancers: DiscoveryLoadBalancer[];
+  eks_clusters: DiscoveryEKSCluster[];
+  rds_instances: DiscoveryRDSInstance[];
+  s3_buckets: DiscoveryS3Bucket[];
+  ecr_repositories: unknown[];
+  iam_roles: DiscoveryIAMRole[];
+  summary: DiscoverySummary;
+}
+
+export interface DiscoveryResponse {
+  status: 'SUCCESS' | 'FAILED';
+  connection_id: string;
+  discovered_at: string | null;
+  result: DiscoveryResult;
+}
+
+export interface DiscoverySummaryResponse {
+  status: 'SUCCESS';
+  connection_id: string;
+  account_id: string;
+  region: string;
+  discovered_at: string | null;
+  summary: DiscoverySummary;
+}
+
+/** Trigger a full read-only AWS infrastructure discovery scan. */
+export async function runAWSDiscovery(connectionId: string): Promise<DiscoveryResponse> {
+  return request<DiscoveryResponse>(
+    `/api/cloud/aws/${encodeURIComponent(connectionId)}/discover`,
+    { method: 'POST' },
+  );
+}
+
+/** Fetch the last cached discovery result (no AWS calls). */
+export async function getAWSDiscoveryResult(connectionId: string): Promise<DiscoveryResponse> {
+  return request<DiscoveryResponse>(
+    `/api/cloud/aws/${encodeURIComponent(connectionId)}/discover`,
+  );
+}
+
+/** Fetch only the lightweight summary counts from the last discovery. */
+export async function getAWSDiscoverySummary(connectionId: string): Promise<DiscoverySummaryResponse> {
+  return request<DiscoverySummaryResponse>(
+    `/api/cloud/aws/${encodeURIComponent(connectionId)}/discover/summary`,
   );
 }
