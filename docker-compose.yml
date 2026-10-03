@@ -27,6 +27,7 @@ services:
       - redis
     volumes:
       - ./backend:/app
+      - terraform_artifacts:/root/deployment_output
 
   worker:
     build: ./backend
@@ -37,6 +38,7 @@ services:
       - redis
     volumes:
       - ./backend:/app
+      - terraform_artifacts:/root/deployment_output
 
   frontend:
     build: ./frontend
@@ -47,3 +49,4 @@ services:
 
 volumes:
   pgdata:
+  terraform_artifacts:

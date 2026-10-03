@@ -16,6 +16,8 @@ Concurrency fix (carried forward from v2):
 import httpx
 import json
 import asyncio
+import threading
+import weakref
 from typing import AsyncIterator, Callable, Optional
 
 from config import settings
@@ -25,9 +27,21 @@ class LLMUnavailableError(Exception):
     """All LLM failures are wrapped in this. str(err) is user-facing."""
     pass
 
-# Lazy-init at import time. Python >= 3.10 binds the loop lazily, so an
-# asyncio.Semaphore created at module load time is safe across FastAPI lifespans.
-_semaphore = asyncio.Semaphore(settings.llm_max_concurrency)
+# Semaphore instances are bound to the event loop that first waits on them.
+# The API and background workers may create multiple loops (for example, via
+# separate asyncio.run() calls), so keep one semaphore per live loop.
+_semaphores: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
+_semaphores_lock = threading.Lock()
+
+
+def _get_semaphore() -> asyncio.Semaphore:
+    loop = asyncio.get_running_loop()
+    with _semaphores_lock:
+        semaphore = _semaphores.get(loop)
+        if semaphore is None:
+            semaphore = asyncio.Semaphore(settings.llm_max_concurrency)
+            _semaphores[loop] = semaphore
+        return semaphore
 
 
 def _headers() -> dict:
@@ -76,7 +90,7 @@ async def chat(messages, temperature=0.3, max_tokens=4096, timeout=None) -> str:
         timeout = settings.llm_timeout
     payload = {"model": settings.llm_model, "messages": messages,
                "temperature": temperature, "max_tokens": max_tokens}
-    async with _semaphore:
+    async with _get_semaphore():
         try:
             async with httpx.AsyncClient(timeout=timeout) as client:
                 resp = await client.post(
@@ -126,7 +140,7 @@ async def chat_stream(
             except Exception: pass
         yield text
 
-    async with _semaphore:
+    async with _get_semaphore():
         async with httpx.AsyncClient(timeout=timeout) as client:
             try:
                 async with client.stream(

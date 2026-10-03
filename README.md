@@ -213,17 +213,17 @@ Users can review generated:
 * Architecture recommendations
 * Cost estimates
 
-### 6. Approve Deployment
+### 6. Create and Review a Terraform Plan
 
-After reviewing the generated infrastructure, users can approve the deployment.
+From Deployments, select an analyzed project and a connected AWS account with a completed discovery scan. InfraGenie creates a deployment workspace, runs `terraform init`, `terraform validate`, and `terraform plan`, then shows the AWS account, region, resource actions, and full plan output. Planning does not apply changes.
 
-### 7. Infrastructure Provisioning
+### 7. Explicit Approval and Apply
 
-The deployment pipeline provisions the required infrastructure and deploys the application.
+The user reviews the plan and checks the acknowledgement before selecting **Approve & deploy**. The backend assumes the connected AWS role, creates a fresh Terraform plan, and compares it with the reviewed plan. If the plan changed, the updated plan returns for approval. Terraform applies only the matching saved plan.
 
-### 8. Monitor Deployment
+### 8. Track Deployment State
 
-Users can track deployment progress and status in real time.
+Deployments move through planning, awaiting approval, applying, and deployed or failed states. Successful applies capture Terraform outputs for the deployment details.
 
 ### 9. AI Infrastructure Chat
 
@@ -324,6 +324,12 @@ Start PostgreSQL and Redis:
 docker-compose up -d postgres redis
 ```
 
+Build the backend image with Terraform CLI included:
+
+```bash
+docker-compose build backend worker
+```
+
 Start the backend, worker, and frontend:
 
 ```bash
@@ -365,6 +371,8 @@ Install dependencies:
 ```bash
 pip install -r requirements.txt
 ```
+
+Install the Terraform CLI on the machine that runs `worker.py` and make sure it is on `PATH`. The deployment worker invokes Terraform directly for `init`, `validate`, `plan`, and an explicitly approved `apply`.
 
 Start the FastAPI server:
 
@@ -698,11 +706,11 @@ Potential future improvements include:
 * [ ] Multi-cloud deployment
 * [ ] Infrastructure drift detection
 * [ ] Automated rollback
-* [ ] Terraform plan visualization
+* [x] Terraform plan visualization
 * [ ] Kubernetes cluster health monitoring
 * [ ] Advanced cost forecasting
 * [ ] Infrastructure security scoring
-* [ ] Deployment approval workflows
+* [x] Deployment approval workflows
 * [ ] GitHub App integration
 * [ ] GitLab integration
 * [ ] Infrastructure versioning

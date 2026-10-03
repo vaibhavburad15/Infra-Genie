@@ -6,7 +6,7 @@ Routes:
   Orgs     : /orgs (list/create), /orgs/{id}, /orgs/{id}/members, /orgs/{id}/switch
   Audit    : /audit-log
   Projects : /projects (CRUD, upload, analyze)
-  Deploys  : /projects/{pid}/deployments, /deployments/{did}/approve
+  Deploys  : /api/deployments, /api/deployments/{did}[/{plan,approve}]
   Reports  : /projects/{pid}/reports
   Metrics  : /metrics/overview   (for Monitoring / Security / Cost / etc.)
   AI       : POST /stream/insights (SSE), /projects/{pid}/logs/stream (SSE)
@@ -39,15 +39,15 @@ from passlib.context import CryptContext
 from config import settings
 from models import (
     init_db, get_db,
-    User, Organization, Membership, Project, Deployment,
+    User, Organization, Membership, Project, Deployment, CloudAccount,
     Report, AuditLog,
     UserCreate, UserOut, TokenResponse, EmailOtpRequest, EmailOtpVerify,
-    ProjectCreate, ProjectOut, DeploymentOut, ReportOut, ApproveDeployment,
+    ProjectCreate, ProjectOut, DeploymentOut, ReportOut, ApproveDeployment, DeploymentCreate,
     OrganizationCreate, OrganizationOut, MembershipOut, MembershipInvite,
     AuditLogOut,
-    ProjectStatus, DeploymentStatus, OrgRole,
+    ProjectStatus, DeploymentStatus, CloudAccountStatus, OrgRole,
 )
-from tasks import get_queue, get_redis_conn, task_analyze_project, task_run_deployment
+from tasks import get_queue, get_redis_conn, task_analyze_project, task_plan_deployment
 from llm import chat_stream
 
 
@@ -539,40 +539,220 @@ async def list_deployments(project_id,
     return res.scalars().all()
 
 
-@app.post("/deployments/{deployment_id}/approve", response_model=DeploymentOut, tags=["deployments"])
-async def approve_deployment(deployment_id, payload: ApproveDeployment,
-                             current_user: User = Depends(require_user),
-                             db: AsyncSession = Depends(get_db)):
+@app.post("/api/deployments", response_model=DeploymentOut, status_code=202, tags=["deployments"])
+@app.post("/deployments", response_model=DeploymentOut, status_code=202, tags=["deployments"])
+async def create_deployment(payload: DeploymentCreate,
+                            current_user: User = Depends(require_user),
+                            db: AsyncSession = Depends(get_db)):
+    """Queue workspace generation and a read-only Terraform plan."""
     org = await resolve_current_org(current_user, db)
-    res = await db.execute(select(Deployment).where(
-        Deployment.id == deployment_id, Deployment.org_id == org.id))
-    d = res.scalar_one_or_none()
-    if not d:
-        raise HTTPException(404, "Deployment not found")
-    if not payload.approved:
-        d.status = DeploymentStatus.failed
-        await db.commit()
-        await db.refresh(d)
-        db.add(AuditLog(org_id=org.id, actor_id=current_user.id,
-                        action="deployment.reject", target_type="deployment",
-                        target_id=str(d.id)))
-        await db.commit()
-        return d
-    # ── Deployment execution is not yet implemented ────────────────────────
-    # Approving records intent but does NOT queue a job. The deployment stays
-    # in awaiting_approval so the frontend can surface the "coming soon" state.
-    d.approved_by = current_user.id
-    d.approved_at = datetime.utcnow()
-    # Leave status as awaiting_approval — real provisioning is not wired up yet.
-    db.add(AuditLog(org_id=org.id, actor_id=current_user.id,
-                    action="deployment.approve", target_type="deployment",
-                    target_id=str(d.id)))
+    project = (await db.execute(select(Project).where(
+        Project.id == payload.project_id, Project.org_id == org.id
+    ))).scalar_one_or_none()
+    if not project:
+        raise HTTPException(404, "Project not found")
+    if project.status not in (ProjectStatus.ready, ProjectStatus.deployed):
+        raise HTTPException(409, "Analyze the project before creating a deployment plan.")
+    if not project.deployment_plan or not project.deployment_plan.get("terraform"):
+        raise HTTPException(409, "Project Terraform artifacts are not ready. Re-run project analysis.")
+
+    account = (await db.execute(select(CloudAccount).where(
+        CloudAccount.id == payload.cloud_account_id,
+        CloudAccount.user_id == current_user.id,
+    ))).scalar_one_or_none()
+    if not account:
+        raise HTTPException(404, "Connected AWS account not found")
+    if account.status != CloudAccountStatus.connected:
+        raise HTTPException(409, "Connect and verify this AWS account before planning.")
+    if not account.discovery_result or not account.discovery_ran_at:
+        raise HTTPException(409, "Run AWS Discovery for this account before planning.")
+
+    deployment = Deployment(
+        project_id=project.id,
+        user_id=current_user.id,
+        org_id=org.id,
+        cloud_account_id=account.id,
+        status=DeploymentStatus.draft,
+        environment=payload.environment,
+        # Use explicitly supplied region if provided; else fall back to the account's region.
+        region=payload.region or account.region,
+        artifacts=project.deployment_plan,
+        agent_logs={"logs": []},
+    )
+    db.add(deployment)
+    await db.flush()
+    db.add(AuditLog(
+        org_id=org.id,
+        actor_id=current_user.id,
+        action="deployment.plan.request",
+        target_type="deployment",
+        target_id=str(deployment.id),
+        metadata_json={"project_id": str(project.id), "cloud_account_id": str(account.id)},
+    ))
     await db.commit()
-    await db.refresh(d)
-    return d
+    await db.refresh(deployment)
+    try:
+        deployment.status = DeploymentStatus.planning
+        deployment.updated_at = datetime.utcnow()
+        await db.commit()
+        get_queue().enqueue(task_plan_deployment, str(deployment.id), job_timeout=2400)
+    except Exception as exc:
+        deployment.status = DeploymentStatus.failed
+        deployment.error_message = "Could not queue Terraform planning: " + str(exc)[:1000]
+        await db.commit()
+        raise HTTPException(503, "Could not queue deployment planning. Check the worker and Redis.")
+    return deployment
 
 
-# ── Reports + Metrics ─────────────────────────────────────────────────────────
+@app.get("/api/deployments/{deployment_id}", response_model=DeploymentOut, tags=["deployments"])
+async def get_deployment(deployment_id: UUID,
+                         current_user: User = Depends(require_user),
+                         db: AsyncSession = Depends(get_db)):
+    org = await resolve_current_org(current_user, db)
+    deployment = (await db.execute(select(Deployment).where(
+        Deployment.id == deployment_id, Deployment.org_id == org.id
+    ))).scalar_one_or_none()
+    if not deployment:
+        raise HTTPException(404, "Deployment not found")
+    return deployment
+
+
+@app.get("/api/deployments/{deployment_id}/plan", tags=["deployments"])
+async def get_deployment_plan(deployment_id: UUID,
+                              current_user: User = Depends(require_user),
+                              db: AsyncSession = Depends(get_db)):
+    """Return the Terraform plan summary for a deployment.
+
+    Does NOT include AWS credentials, session tokens, or other secrets.
+    The terraform_plan field contains only the human-readable plan output
+    (equivalent to `terraform show`).
+    """
+    org = await resolve_current_org(current_user, db)
+    deployment = (await db.execute(select(Deployment).where(
+        Deployment.id == deployment_id, Deployment.org_id == org.id
+    ))).scalar_one_or_none()
+    if not deployment:
+        raise HTTPException(404, "Deployment not found")
+    account = None
+    if deployment.cloud_account_id:
+        account = (await db.execute(select(CloudAccount).where(
+            CloudAccount.id == deployment.cloud_account_id
+        ))).scalar_one_or_none()
+    project = (await db.execute(select(Project).where(
+        Project.id == deployment.project_id
+    ))).scalar_one_or_none()
+    return {
+        "deployment_id": str(deployment.id),
+        "status": deployment.status.value if deployment.status else None,
+        "account_id": account.account_id if account else None,
+        "region": deployment.region,
+        "environment": deployment.environment,
+        "project_name": project.name if project else None,
+        "summary": deployment.plan_summary,
+        "terraform_plan": deployment.terraform_plan,
+        "plan_created_at": (
+            deployment.plan_created_at.isoformat() + "Z"
+            if deployment.plan_created_at else None
+        ),
+        "error_message": deployment.error_message,
+    }
+
+
+@app.post("/api/deployments/{deployment_id}/approve", response_model=DeploymentOut, tags=["deployments"])
+async def approve_deployment_v2(deployment_id: UUID, payload: ApproveDeployment,
+                                current_user: User = Depends(require_user),
+                                db: AsyncSession = Depends(get_db)):
+    """Record an explicit user approval (or rejection) for a deployment plan.
+
+    This endpoint is the safety gate before any infrastructure is created.
+
+    On approval  → status transitions to APPROVED. No further action is taken.
+                   terraform apply is NOT queued or executed here.
+    On rejection → status transitions to REJECTED.
+
+    The apply step (APPLYING → DEPLOYED) is a separate, future phase that
+    requires a subsequent explicit trigger.
+    """
+    org = await resolve_current_org(current_user, db)
+
+    # Re-load with a lock to prevent duplicate concurrent approvals.
+    deployment = (await db.execute(select(Deployment).where(
+        Deployment.id == deployment_id, Deployment.org_id == org.id
+    ))).scalar_one_or_none()
+    if not deployment:
+        raise HTTPException(404, "Deployment not found")
+
+    # Verify the requesting user owns the deployment (belt-and-suspenders on top of org check).
+    if deployment.user_id and deployment.user_id != current_user.id:
+        # Org admins/owners may also approve — only reject if user_id is set and mismatches.
+        membership = (await db.execute(select(Membership).where(
+            Membership.user_id == current_user.id,
+            Membership.org_id == org.id,
+        ))).scalar_one_or_none()
+        if not membership or membership.role not in (OrgRole.owner.value, OrgRole.admin.value):
+            raise HTTPException(403, "Only the deployment owner or an org admin can approve this deployment.")
+
+    # Idempotency: if already approved, return current state rather than erroring.
+    if deployment.status == DeploymentStatus.approved and payload.approved:
+        return deployment
+
+    # Only plans in PLAN_READY or AWAITING_APPROVAL may be actioned.
+    if deployment.status not in (DeploymentStatus.plan_ready, DeploymentStatus.awaiting_approval):
+        raise HTTPException(
+            409,
+            f"Cannot approve a deployment in '{deployment.status.value}' status. "
+            "Only deployments in 'awaiting_approval' or 'plan_ready' status can be approved.",
+        )
+
+    # ── Rejection path ────────────────────────────────────────────────────────
+    if not payload.approved:
+        deployment.status = DeploymentStatus.rejected
+        deployment.updated_at = datetime.utcnow()
+        db.add(AuditLog(
+            org_id=org.id,
+            actor_id=current_user.id,
+            action="deployment.reject",
+            target_type="deployment",
+            target_id=str(deployment.id),
+            metadata_json={"deployment_id": str(deployment.id)},
+        ))
+        await db.commit()
+        await db.refresh(deployment)
+        return deployment
+
+    # ── Approval path ─────────────────────────────────────────────────────────
+    if not deployment.plan_fingerprint or not deployment.terraform_workspace:
+        raise HTTPException(409, "This deployment does not have a complete Terraform plan. "
+                                 "Wait for the plan to finish before approving.")
+
+    deployment.approved_by = current_user.id
+    deployment.approved_at = datetime.utcnow()
+    deployment.status = DeploymentStatus.approved
+    deployment.error_message = None
+    deployment.updated_at = datetime.utcnow()
+
+    db.add(AuditLog(
+        org_id=org.id,
+        actor_id=current_user.id,
+        action="deployment.approve",
+        target_type="deployment",
+        target_id=str(deployment.id),
+        metadata_json={
+            "deployment_id": str(deployment.id),
+            "plan_fingerprint": deployment.plan_fingerprint[:16],
+            "region": deployment.region,
+        },
+    ))
+    await db.commit()
+    await db.refresh(deployment)
+
+    # ── STOP HERE ─────────────────────────────────────────────────────────────
+    # terraform apply is NOT queued or executed.
+    # The deployment remains in APPROVED status.
+    # The apply phase (APPLYING → DEPLOYED) is implemented separately.
+
+    return deployment
+
 
 @app.get("/projects/{project_id}/reports", response_model=List[ReportOut], tags=["reports"])
 async def list_reports(project_id,
@@ -606,9 +786,12 @@ async def metrics_overview(current_user: User = Depends(require_user),
     p_analyzing = sum(1 for p in projects if p.status == ProjectStatus.analyzing)
 
     d_total = len(deployments)
-    d_success = sum(1 for d in deployments if d.status == DeploymentStatus.success)
+    d_success = sum(1 for d in deployments if d.status in (DeploymentStatus.success, DeploymentStatus.deployed))
     d_failed = sum(1 for d in deployments if d.status == DeploymentStatus.failed)
-    d_running = sum(1 for d in deployments if d.status == DeploymentStatus.running)
+    d_running = sum(1 for d in deployments if d.status in (
+        DeploymentStatus.running, DeploymentStatus.planning,
+        DeploymentStatus.approved, DeploymentStatus.applying,
+    ))
 
     durations = [d.duration_seconds for d in deployments
                  if d.duration_seconds is not None and d.duration_seconds > 0]

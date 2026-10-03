@@ -6,7 +6,7 @@ Tables (some added in v3 for the SaaS structure):
   organizations — tenant boundary (every project belongs to one org)
   memberships  — user ↔ org with role (owner | admin | developer | viewer)
   projects     — per-tenant project; owner_id is the user who created it
-  deployments  — per-project deployment record (created on analysis completion)
+  deployments  — per-project Terraform plan / approval / apply record
   reports      — generated reports (created on deployment completion)
   audit_log    — every privileged action (login, project analysis, deploy approval)
 """
@@ -77,6 +77,37 @@ async def init_db():
             "ALTER TABLE deployments ADD COLUMN IF NOT EXISTS duration_seconds INTEGER"))
         await conn.execute(text(
             "ALTER TABLE deployments ADD COLUMN IF NOT EXISTS artifact_dir VARCHAR(500)"))
+        await conn.execute(text(
+            "ALTER TABLE deployments ADD COLUMN IF NOT EXISTS cloud_account_id UUID"))
+        await conn.execute(text(
+            "ALTER TABLE deployments ADD COLUMN IF NOT EXISTS user_id UUID"))
+        await conn.execute(text(
+            "UPDATE deployments d SET user_id = p.owner_id FROM projects p "
+            "WHERE d.project_id = p.id AND d.user_id IS NULL"))
+        await conn.execute(text(
+            "ALTER TABLE deployments ADD COLUMN IF NOT EXISTS region VARCHAR(50)"))
+        await conn.execute(text(
+            "ALTER TABLE deployments ADD COLUMN IF NOT EXISTS terraform_workspace VARCHAR(1000)"))
+        await conn.execute(text(
+            "ALTER TABLE deployments ADD COLUMN IF NOT EXISTS plan_summary JSON"))
+        await conn.execute(text(
+            "ALTER TABLE deployments ADD COLUMN IF NOT EXISTS terraform_plan TEXT"))
+        await conn.execute(text(
+            "ALTER TABLE deployments ADD COLUMN IF NOT EXISTS plan_fingerprint VARCHAR(64)"))
+        await conn.execute(text(
+            "ALTER TABLE deployments ADD COLUMN IF NOT EXISTS error_message TEXT"))
+        await conn.execute(text(
+            "ALTER TABLE deployments ADD COLUMN IF NOT EXISTS deployment_outputs JSON"))
+        await conn.execute(text(
+            "ALTER TABLE deployments ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP"))
+        await conn.execute(text(
+            "ALTER TABLE deployments ADD COLUMN IF NOT EXISTS plan_created_at TIMESTAMP"))
+        # Existing deployments use a PostgreSQL enum; extend it in place.
+        for _deployment_status in (
+            "draft", "planning", "plan_ready", "rejected", "approved", "applying", "deployed"
+        ):
+            await conn.execute(text(
+                f"ALTER TYPE deploymentstatus ADD VALUE IF NOT EXISTS '{_deployment_status}'"))
         # Cloud accounts table (AWS cross-account connection)
         await conn.execute(text("""
             CREATE TABLE IF NOT EXISTS cloud_accounts (
@@ -130,11 +161,18 @@ class ProjectStatus(str, enum.Enum):
 
 
 class DeploymentStatus(str, enum.Enum):
+    draft = "draft"
+    planning = "planning"
+    plan_ready = "plan_ready"
     pending = "pending"
     running = "running"
     success = "success"
     failed = "failed"
     awaiting_approval = "awaiting_approval"
+    rejected = "rejected"
+    approved = "approved"
+    applying = "applying"
+    deployed = "deployed"
 
 
 class OrgRole(str, enum.Enum):
@@ -229,18 +267,33 @@ class Deployment(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     project_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("projects.id"), nullable=False)
+    user_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=True, index=True
+    )
     org_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=True)
+    cloud_account_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("cloud_accounts.id"), nullable=True
+    )
     status: Mapped[Optional[DeploymentStatus]] = mapped_column(SAEnum(DeploymentStatus), default=DeploymentStatus.pending)
     environment: Mapped[Optional[str]] = mapped_column(String(100), default="production")
+    region: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     artifacts: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON, nullable=True)
     agent_logs: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON, nullable=True)
+    terraform_workspace: Mapped[Optional[str]] = mapped_column(String(1000), nullable=True)
+    plan_summary: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON, nullable=True)
+    terraform_plan: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    plan_fingerprint: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    deployment_outputs: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON, nullable=True)
     approved_by: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
     approved_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    plan_created_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     started_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     duration_seconds: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     artifact_dir: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     created_at: Mapped[Optional[datetime]] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     project: Mapped["Project"] = relationship(back_populates="deployments")
 
@@ -421,18 +474,29 @@ class ProjectOut(BaseModel):
 class DeploymentOut(BaseModel):
     id: uuid.UUID
     project_id: uuid.UUID
+    user_id: Optional[uuid.UUID] = None
+    cloud_account_id: Optional[uuid.UUID] = None
     status: DeploymentStatus
     environment: str
+    region: Optional[str] = None
     artifacts: Optional[dict]
     agent_logs: Optional[dict]
+    terraform_workspace: Optional[str] = None
+    plan_summary: Optional[dict] = None
+    terraform_plan: Optional[str] = None
+    error_message: Optional[str] = None
+    deployment_outputs: Optional[dict] = None
+    approved_by: Optional[uuid.UUID] = None
     approved_at: Optional[datetime]
+    plan_created_at: Optional[datetime] = None
     started_at: Optional[datetime]
     completed_at: Optional[datetime]
     duration_seconds: Optional[int]
     artifact_dir: Optional[str]
     created_at: datetime
+    updated_at: Optional[datetime] = None
 
-    @field_serializer('approved_at', 'started_at', 'completed_at', 'created_at', mode='plain')
+    @field_serializer('approved_at', 'plan_created_at', 'started_at', 'completed_at', 'created_at', 'updated_at', mode='plain')
     def serialize_dates(self, v: Optional[datetime]) -> Optional[str]:
         return serialize_utc_datetime(v)
 
@@ -459,6 +523,13 @@ class ReportOut(BaseModel):
 
 class ApproveDeployment(BaseModel):
     approved: bool
+
+
+class DeploymentCreate(BaseModel):
+    project_id: uuid.UUID
+    cloud_account_id: uuid.UUID
+    environment: str = "production"
+    region: Optional[str] = None   # if omitted, uses the cloud account's region
 
 
 class AgentConfigUpdate(BaseModel):

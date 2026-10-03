@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import {
-  FolderGit2, Clock, Rocket, MoreVertical, Plus, Server, Search,
+  FolderGit2, Clock, MoreVertical, Plus, Server, Search,
   CheckCircle2, AlertTriangle, Loader, X, RefreshCw, ChevronRight,
   Code, Box, Cloud, GitBranch, Shield, Activity, DollarSign,
   Cpu, Database, Layers, FileCode, ExternalLink, Terminal,
@@ -9,7 +9,7 @@ import {
 } from 'lucide-react';
 import {
   listProjects, createProject, deleteProject, analyzeProject, getProject,
-  streamProjectLogs, getProjectLogs, listDeployments, approveDeployment,
+  streamProjectLogs, getProjectLogs,
   uploadProjectFile, timeAgo, parseDate, ForbiddenError,
   type Project, type DeploymentPlan, type LogEntry, type ArchitectureGraph,
 } from '@/api';
@@ -245,31 +245,6 @@ function ProjectDrawer({ project, onClose, onRefresh }: {
   const pollingRef = useRef(false);
   const plan = project.deployment_plan;
   const analysis = plan?.analysis || project.analysis_result;
-
-  // Approval availability: when a plan is ready, look for a deployment that is
-  // waiting for approval so the drawer can offer "Approve & Deploy" directly
-  // (previously the approval UI lived only on the Deployments page).
-  const [pendingDeploymentId, setPendingDeploymentId] = useState<string | null>(null);
-  const [deployMsg, setDeployMsg] = useState('');
-  const [deploying, setDeploying] = useState(false);
-
-  useEffect(() => {
-    if (project.status !== 'ready') {
-      setPendingDeploymentId(null);
-      return;
-    }
-    let cancelled = false;
-    listDeployments(project.id)
-      .then((deps) => {
-        if (cancelled) return;
-        // listDeployments() returns Promise<unknown> in api.ts — narrow it here.
-        const list = (deps as Array<{ id: string; status: string }>) || [];
-        const awaiting = list.find((d) => d.status === 'awaiting_approval');
-        setPendingDeploymentId(awaiting ? awaiting.id : null);
-      })
-      .catch(() => setPendingDeploymentId(null));
-    return () => { cancelled = true; };
-  }, [project.id, project.status]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Poll for status change while analyzing — stops as soon as status changes.
   // Keyed only on project.id so re-renders mid-poll don't restart the interval.
@@ -673,33 +648,9 @@ function ProjectDrawer({ project, onClose, onRefresh }: {
                   <RefreshCw size={13} /> Re-analyze
                 </button>
               )}
-              {(project.status === 'ready' && pendingDeploymentId) && (
-                <button
-                  onClick={async () => {
-                    try {
-                      setDeploying(true);
-                      setDeployMsg('');
-                      await approveDeployment(pendingDeploymentId, true);
-                      setDeployMsg('Deployment approved. Actual provisioning is coming soon — we\'re actively building it.');
-                      const u = await getProject(project.id).catch(() => null);
-                      if (u) onRefresh(u);
-                    } catch (e: any) {
-                      setDeployMsg(e.message || 'Failed to start deployment.');
-                    } finally {
-                      setDeploying(false);
-                    }
-                  }}
-                  className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-emerald-500 text-white text-xs font-semibold hover:bg-emerald-600 cursor-pointer transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
-                >
-                  {deploying ? <Loader size={13} className="animate-spin" /> : <Rocket size={13} />}
-                  {deploying ? 'Approving…' : 'Approve & Deploy'}
-                </button>
-              )}
             </div>
-            {deployMsg && (
-              <div className="px-3 py-2 rounded-lg bg-[#edf3fb] border border-[#a8c1ea] text-[#1e3a7a] text-xs max-w-sm">
-                {deployMsg}
-              </div>
+            {(project.status === 'ready' || project.status === 'deployed') && (
+              <p className="text-gray-400 text-[10px]">Create and review a Terraform plan from the Deployments page.</p>
             )}
           </div>
         </div>

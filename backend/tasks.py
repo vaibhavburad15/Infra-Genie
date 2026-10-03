@@ -280,7 +280,7 @@ def _record_agent_run(db, owner_id, agent_name: str, level: str) -> None:
 # ── Main task: analyze project ────────────────────────────────────────────────
 
 def task_analyze_project(project_id: str) -> None:
-    from models import Project, ProjectStatus, Deployment, DeploymentStatus
+    from models import Project, ProjectStatus
 
     db = _get_sync_session()
     r = get_redis_conn()
@@ -461,18 +461,9 @@ def task_analyze_project(project_id: str) -> None:
                       metadata={"framework_count": len(
                           (project.detailed_analysis or {}).get("frameworks", []))})
 
-        deployment = Deployment(
-            project_id=project.id,
-            org_id=project.org_id,
-            status=DeploymentStatus.awaiting_approval,
-            artifacts=artifacts,
-            agent_logs={"logs": result.get("agent_logs", [])},
-        )
-        db.add(deployment)
-        db.commit()
         try:
             r.publish(f"project_logs:{project.id}",
-                      _json.dumps({"__done__": True, "deployment_id": str(deployment.id)}))  # type: ignore[arg-type]
+                      _json.dumps({"__done__": True}))  # type: ignore[arg-type]
         except Exception:
             pass
 
@@ -502,11 +493,306 @@ def task_analyze_project(project_id: str) -> None:
 
 
 def task_run_deployment(deployment_id: str) -> None:
-    """Deployment execution is not yet implemented.
+    """Re-plan an explicitly approved workspace, then apply only that plan."""
+    from models import (
+        AuditLog, CloudAccount, CloudAccountStatus, Deployment, DeploymentStatus,
+        Project, ProjectStatus,
+    )
+    from deployment_planner import (
+        TerraformError, assume_role_environment, deployment_workspace,
+        run_terraform_plan, apply_plan,
+    )
 
-    This task is intentionally a no-op. The approve endpoint records the
-    approval but does not enqueue this job. When real provisioning is built,
-    remove this guard and implement the steps below.
+    db = _get_sync_session()
+    try:
+        deployment = db.query(Deployment).filter(
+            Deployment.id == deployment_id
+        ).with_for_update().first()
+        if not deployment or deployment.status != DeploymentStatus.approved:
+            return
+        project = db.query(Project).filter(Project.id == deployment.project_id).first()
+        account = db.query(CloudAccount).filter(
+            CloudAccount.id == deployment.cloud_account_id
+        ).first()
+        if not project or not account:
+            raise TerraformError("Project or connected AWS account no longer exists.")
+        if account.status != CloudAccountStatus.connected:
+            raise TerraformError("AWS account is no longer connected. Reconnect it and create a new plan.")
+
+        workspace = deployment_workspace(deployment.id)
+        if not deployment.terraform_workspace or Path(deployment.terraform_workspace).resolve() != workspace:
+            raise TerraformError("The deployment workspace does not match this deployment.")
+
+        deployment.status = DeploymentStatus.applying
+        deployment.started_at = datetime.utcnow()
+        deployment.updated_at = datetime.utcnow()
+        db.commit()
+
+        env = assume_role_environment(account)
+        fresh = run_terraform_plan(workspace, env)
+        if fresh.fingerprint != deployment.plan_fingerprint:
+            # AWS state changed since the user reviewed the original plan.
+            # Replace the review data and require a second explicit approval.
+            deployment.status = DeploymentStatus.awaiting_approval
+            deployment.plan_summary = fresh.summary
+            deployment.terraform_plan = fresh.display
+            deployment.plan_fingerprint = fresh.fingerprint
+            deployment.approved_by = None
+            deployment.approved_at = None
+            deployment.started_at = None
+            deployment.error_message = (
+                "AWS changed after review. The refreshed Terraform plan is ready; "
+                "review it and approve again."
+            )
+            deployment.updated_at = datetime.utcnow()
+            db.commit()
+            return
+
+        # The only apply invocation uses the plan that was just fingerprinted.
+        outputs = apply_plan(workspace, env, "deployment.tfplan")
+        finished = datetime.utcnow()
+        deployment.status = DeploymentStatus.deployed
+        deployment.deployment_outputs = outputs.get("outputs", {})
+        deployment.terraform_plan = fresh.display
+        deployment.completed_at = finished
+        deployment.updated_at = finished
+        if deployment.started_at:
+            deployment.duration_seconds = int((finished - deployment.started_at).total_seconds())
+        deployment.error_message = None
+        project.status = ProjectStatus.deployed
+        db.add(AuditLog(
+            org_id=deployment.org_id,
+            actor_id=deployment.approved_by,
+            action="deployment.apply.success",
+            target_type="deployment",
+            target_id=str(deployment.id),
+        ))
+        db.commit()
+    except Exception as exc:
+        try:
+            db.rollback()
+            deployment = db.query(Deployment).filter(Deployment.id == deployment_id).first()
+            if deployment:
+                finished = datetime.utcnow()
+                deployment.status = DeploymentStatus.failed
+                deployment.error_message = (str(exc) or type(exc).__name__)[:12000]
+                deployment.completed_at = finished
+                deployment.updated_at = finished
+                if deployment.started_at:
+                    deployment.duration_seconds = int((finished - deployment.started_at).total_seconds())
+                db.commit()
+        except Exception:
+            db.rollback()
+    finally:
+        db.close()
+
+
+def task_plan_deployment(deployment_id: str) -> None:
+    """Generate a Terraform workspace and run a read-only plan for user review.
+
+    State machine:
+        PLANNING → (workspace + terraform fmt/init/validate/plan) → PLAN_READY
+                 → AWAITING_APPROVAL
+        PLANNING → (any error) → FAILED
+
+    IMPORTANT: terraform apply is NOT called here.
+    The plan stops at AWAITING_APPROVAL and waits for an explicit user decision
+    via POST /api/deployments/{id}/approve.
     """
-    # Nothing to do — deployment is not wired up yet.
-    return
+    import logging as _logging
+    from models import (
+        CloudAccount, CloudAccountStatus, Deployment, DeploymentStatus, Project,
+    )
+    from deployment_planner import (
+        TerraformError, assume_role_environment, generate_workspace,
+        run_terraform_plan,
+    )
+
+    _log = _logging.getLogger(__name__)
+    db = _get_sync_session()
+    try:
+        deployment = db.query(Deployment).filter(Deployment.id == deployment_id).first()
+        if not deployment or deployment.status != DeploymentStatus.planning:
+            return
+
+        project = db.query(Project).filter(Project.id == deployment.project_id).first()
+        account = db.query(CloudAccount).filter(
+            CloudAccount.id == deployment.cloud_account_id
+        ).first()
+
+        _log.info(
+            "[DEPLOYMENT] deployment_planning_started | deployment_id=%s | "
+            "user_id=%s | project_id=%s",
+            deployment_id,
+            deployment.user_id,
+            deployment.project_id,
+        )
+
+        # ── Validation ────────────────────────────────────────────────────────
+        if not project or not account:
+            raise TerraformError(
+                "Project or connected AWS account no longer exists.",
+                error_kind="workspace_error",
+            )
+        if account.status != CloudAccountStatus.connected:
+            raise TerraformError(
+                "AWS account is not connected. Reconnect it and create a new plan.",
+                error_kind="assume_role_failed",
+            )
+        if not account.discovery_result or not account.discovery_ran_at:
+            raise TerraformError(
+                "Run AWS Discovery for this account before creating a deployment plan.",
+                error_kind="workspace_error",
+            )
+        artifacts = deployment.artifacts or project.deployment_plan or {}
+        if not isinstance(artifacts, dict):
+            raise TerraformError(
+                "Project artifacts are not in a supported format.",
+                error_kind="invalid_artifact",
+            )
+        if not artifacts.get("terraform"):
+            raise TerraformError(
+                "Project has no Terraform artifacts. Re-run project analysis.",
+                error_kind="invalid_artifact",
+            )
+
+        # ── Generate workspace ────────────────────────────────────────────────
+        # Use the region from the deployment record if set (allows override),
+        # otherwise fall back to the cloud account's region.
+        effective_region = deployment.region or account.region
+        workspace = generate_workspace(
+            deployment_id=deployment.id,
+            project_name=project.name,
+            artifacts=artifacts,
+            account_id=account.account_id,
+            region=effective_region,
+            discovery_ran_at=(account.discovery_ran_at.isoformat() + "Z"),
+            discovery_result=account.discovery_result or {},
+        )
+        deployment.terraform_workspace = str(workspace)
+        deployment.artifact_dir = str(workspace)
+        deployment.region = effective_region
+        deployment.updated_at = datetime.utcnow()
+        db.commit()
+
+        # ── Obtain temporary AWS credentials (never logged, never returned) ───
+        _log.info(
+            "[DEPLOYMENT] terraform_init_started | deployment_id=%s", deployment_id
+        )
+        env = assume_role_environment(account)
+
+        # ── Run the full planning pipeline (fmt → init → validate → plan) ────
+        result = run_terraform_plan(workspace, env)
+
+        # ── Persist plan results ──────────────────────────────────────────────
+        deployment.plan_summary = result.summary
+        deployment.terraform_plan = result.display
+        deployment.plan_fingerprint = result.fingerprint
+        deployment.plan_created_at = result.plan_created_at
+        deployment.status = DeploymentStatus.plan_ready
+        deployment.updated_at = datetime.utcnow()
+        db.commit()
+
+        _log.info(
+            "[DEPLOYMENT] deployment_plan_ready | deployment_id=%s | "
+            "create=%d | modify=%d | destroy=%d | replace=%d | fingerprint=%s",
+            deployment_id,
+            result.summary.get("create", 0),
+            result.summary.get("modify", 0),
+            result.summary.get("destroy", 0),
+            result.summary.get("replace", 0),
+            result.fingerprint[:16],
+        )
+
+        # ── Transition to AWAITING_APPROVAL ───────────────────────────────────
+        deployment.status = DeploymentStatus.awaiting_approval
+        deployment.error_message = None
+        deployment.updated_at = datetime.utcnow()
+        db.commit()
+
+        _log.info(
+            "[DEPLOYMENT] deployment_approval_requested | deployment_id=%s | "
+            "user_id=%s | project_id=%s",
+            deployment_id,
+            deployment.user_id,
+            deployment.project_id,
+        )
+
+    except TerraformError as exc:
+        _log.error(
+            "[DEPLOYMENT] deployment_failed | deployment_id=%s | "
+            "error_kind=%s | message=%.500s",
+            deployment_id,
+            getattr(exc, "error_kind", "unknown"),
+            str(exc),
+        )
+        try:
+            db.rollback()
+            deployment = db.query(Deployment).filter(Deployment.id == deployment_id).first()
+            if deployment:
+                deployment.status = DeploymentStatus.failed
+                # Build a user-friendly message keyed on error_kind
+                kind = getattr(exc, "error_kind", "unknown")
+                _kind_messages = {
+                    "missing_binary": (
+                        "Terraform CLI is not installed on the worker. "
+                        "Install Terraform and restart the worker."
+                    ),
+                    "invalid_artifact": (
+                        "The generated Terraform configuration is invalid. "
+                        "Re-run project analysis to regenerate the artifacts."
+                    ),
+                    "init_failed": (
+                        "Terraform initialization failed. Review the Terraform "
+                        "configuration and ensure the AWS provider version is valid."
+                    ),
+                    "validate_failed": (
+                        "Terraform validation failed. The generated configuration "
+                        "has syntax or semantic errors. Re-run project analysis."
+                    ),
+                    "plan_failed": (
+                        "Terraform plan failed. Check the AWS permissions for the "
+                        "connected IAM role and review the plan error details."
+                    ),
+                    "show_failed": (
+                        "Terraform produced a plan but it could not be parsed. "
+                        "Check the worker logs for details."
+                    ),
+                    "assume_role_failed": (
+                        "AWS credential setup failed. Verify the IAM role ARN and "
+                        "trust policy for the connected account, then try again."
+                    ),
+                    "timeout": (
+                        "Terraform command timed out. The AWS account may be "
+                        "experiencing delays. Try again or increase the timeout."
+                    ),
+                }
+                user_message = _kind_messages.get(kind, str(exc)[:12000])
+                deployment.error_message = user_message
+                deployment.updated_at = datetime.utcnow()
+                db.commit()
+        except Exception:
+            try:
+                db.rollback()
+            except Exception:
+                pass
+
+    except Exception as exc:
+        _log.exception(
+            "[DEPLOYMENT] deployment_failed_unexpected | deployment_id=%s", deployment_id
+        )
+        try:
+            db.rollback()
+            deployment = db.query(Deployment).filter(Deployment.id == deployment_id).first()
+            if deployment:
+                deployment.status = DeploymentStatus.failed
+                deployment.error_message = (str(exc) or type(exc).__name__)[:12000]
+                deployment.updated_at = datetime.utcnow()
+                db.commit()
+        except Exception:
+            try:
+                db.rollback()
+            except Exception:
+                pass
+    finally:
+        db.close()

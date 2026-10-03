@@ -11,6 +11,7 @@ import DashboardPage from '@/pages/DashboardPage';
 import ProjectsPage from '@/pages/ProjectsPage';
 import PipelinesPage from '@/pages/PipelinesPage';
 import DeploymentsPage from '@/pages/DeploymentsPage';
+import DeploymentReviewPage from '@/pages/DeploymentReviewPage';
 import AgentsPage from '@/pages/AgentsPage';
 import MonitoringPage from '@/pages/MonitoringPage';
 import InsightsPage from '@/pages/InsightsPage';
@@ -23,6 +24,13 @@ import SettingsPage from '@/pages/SettingsPage';
 import CloudAccountsPage from '@/pages/CloudAccountsPage';
 
 type Page = 'dashboard' | 'projects' | 'deployments' | 'agents' | 'monitoring' | 'insights' | 'infrastructure' | 'pipelines' | 'security' | 'cost' | 'automation' | 'reports' | 'settings' | 'cloud-accounts';
+
+/** Sub-page state for pages that need a selected-item context (e.g. review a deployment). */
+interface SubPageState {
+  page: 'deployment-review';
+  deploymentId: string;
+  projectName?: string;
+}
 
 const pageMeta: Record<Page, { title: string; subtitle: string }> = {
   dashboard: { title: 'Overview', subtitle: 'Infrastructure overview and real-time status' },
@@ -104,16 +112,51 @@ function AuthGate() {
 
 function Dashboard() {
   const [activePage, setActivePage] = useState<Page>('dashboard');
+  const [subPage, setSubPage] = useState<SubPageState | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [aiOpen, setAiOpen] = useState(true);
-  const meta = pageMeta[activePage];
+
+  /** Navigate to the deployment review sub-page. */
+  const openDeploymentReview = (deploymentId: string, projectName?: string) => {
+    setSubPage({ page: 'deployment-review', deploymentId, projectName });
+    setActivePage('deployments');
+  };
+
+  /** Close sub-page and return to the parent page. */
+  const closeSubPage = () => setSubPage(null);
+
+  // Clear sub-page whenever the user navigates to a different top-level page.
+  const handleNavigate = (page: Page) => {
+    setSubPage(null);
+    setActivePage(page);
+  };
+
+  const meta = subPage
+    ? { title: 'Review Deployment', subtitle: 'Review the Terraform plan before approving' }
+    : pageMeta[activePage];
 
   const renderPage = () => {
+    // Sub-page takes priority over the normal page render.
+    if (subPage?.page === 'deployment-review') {
+      return (
+        <DeploymentReviewPage
+          deploymentId={subPage.deploymentId}
+          projectName={subPage.projectName}
+          onBack={closeSubPage}
+        />
+      );
+    }
+
     switch (activePage) {
       case 'dashboard': return <DashboardPage />;
       case 'projects': return <ProjectsPage />;
       case 'pipelines': return <PipelinesPage />;
-      case 'deployments': return <DeploymentsPage />;
+      case 'deployments':
+        return (
+          <DeploymentsPage
+            onReviewDeployment={openDeploymentReview}
+          />
+        );
       case 'agents': return <AgentsPage />;
       case 'monitoring': return <MonitoringPage />;
       case 'security': return <SecurityPage />;
@@ -130,12 +173,12 @@ function Dashboard() {
 
   return (
     <div className="flex h-screen w-full overflow-hidden bg-[#f4f6fa]">
-      <Sidebar activePage={activePage} onNavigate={setActivePage} isOpen={sidebarOpen} onToggle={() => setSidebarOpen((v) => !v)} />
+      <Sidebar activePage={activePage} onNavigate={handleNavigate} isOpen={sidebarOpen} onToggle={() => setSidebarOpen((v) => !v)} />
       <div className="flex-1 flex flex-col min-w-0">
         <Header
           title={meta.title}
           subtitle={meta.subtitle}
-          onNavigate={setActivePage}
+          onNavigate={handleNavigate}
           sidebarOpen={sidebarOpen}
           onToggleSidebar={() => setSidebarOpen((v) => !v)}
           aiOpen={aiOpen}

@@ -408,12 +408,81 @@ export async function listDeployments(projectId: string) {
   return request(`/projects/${projectId}/deployments`);
 }
 
-export async function getDeployment(deploymentId: string) {
-  return request(`/deployments/${deploymentId}`);
+export interface DeploymentResourceChange {
+  address: string;
+  type: string;
+  name: string;
+  action: 'create' | 'modify' | 'destroy' | 'replace' | string;
+  actions: string[];
 }
 
-export async function approveDeployment(deploymentId: string, approved: boolean) {
-  return request(`/deployments/${deploymentId}/approve`, {
+export interface DeploymentPlanSummary {
+  resources: DeploymentResourceChange[];
+  create: number;
+  modify: number;
+  destroy: number;
+  replace: number;
+  has_destructive_changes: boolean;
+  estimated_cost?: number | null;
+}
+
+export interface Deployment {
+  id: string;
+  project_id: string;
+  cloud_account_id?: string | null;
+  status: string;
+  environment: string;
+  region?: string | null;
+  artifacts?: Record<string, unknown> | null;
+  agent_logs?: Record<string, unknown> | null;
+  plan_summary?: DeploymentPlanSummary | null;
+  terraform_plan?: string | null;
+  plan_created_at?: string | null;
+  error_message?: string | null;
+  deployment_outputs?: Record<string, unknown> | null;
+  approved_at?: string | null;
+  started_at?: string | null;
+  completed_at?: string | null;
+  created_at: string;
+  updated_at?: string | null;
+}
+
+export interface DeploymentPlanReview {
+  deployment_id: string;
+  status: string;
+  account_id: string | null;
+  region: string | null;
+  environment?: string | null;
+  project_name?: string | null;
+  summary: DeploymentPlanSummary | null;
+  terraform_plan: string | null;
+  plan_created_at?: string | null;
+  error_message: string | null;
+}
+
+export async function createDeployment(payload: {
+  project_id: string;
+  cloud_account_id: string;
+  environment?: string;
+  region?: string;
+}): Promise<Deployment> {
+  return request<Deployment>('/api/deployments', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function getDeployment(deploymentId: string): Promise<Deployment> {
+  return request<Deployment>(`/api/deployments/${encodeURIComponent(deploymentId)}`);
+}
+
+export async function getDeploymentPlan(deploymentId: string): Promise<DeploymentPlanReview> {
+  return request<DeploymentPlanReview>(`/api/deployments/${encodeURIComponent(deploymentId)}/plan`);
+}
+
+export async function approveDeployment(deploymentId: string, approved: boolean): Promise<Deployment> {
+  return request<Deployment>(`/api/deployments/${encodeURIComponent(deploymentId)}/approve`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ approved }),
