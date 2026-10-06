@@ -49,6 +49,7 @@ from models import (
 )
 from tasks import get_queue, get_redis_conn, task_analyze_project, task_plan_deployment
 from llm import chat_stream
+from zip_validation import ZipValidationError, validate_zip_stream
 
 
 def _exit_gracefully(signum, frame):
@@ -454,7 +455,16 @@ async def upload_project(project_id, file: UploadFile = File(...),
     p = res.scalar_one_or_none()
     if not p:
         raise HTTPException(404, "Project not found")
-    safe_name = Path(file.filename or "upload.zip").name
+
+    filename = file.filename or "upload.zip"
+    if not filename.lower().endswith(".zip"):
+        raise HTTPException(400, "Only .zip files are supported.")
+    try:
+        validate_zip_stream(file.file)
+    except ZipValidationError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+    safe_name = Path(filename).name
     dest = UPLOAD_DIR / f"{project_id}_{safe_name}"
     with open(dest, "wb") as f:
         shutil.copyfileobj(file.file, f)

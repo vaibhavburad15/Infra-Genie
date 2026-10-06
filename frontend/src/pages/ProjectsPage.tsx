@@ -14,6 +14,7 @@ import {
   type Project, type DeploymentPlan, type LogEntry, type ArchitectureGraph,
 } from '@/api';
 import ArchitectureDiagram from '@/components/ArchitectureDiagram';
+import { validateZipContents } from '@/zipValidation';
 
 // ── Upload constraints ──────────────────────────────────────────────────────
 const MAX_UPLOAD_MB = 150;
@@ -21,9 +22,7 @@ const MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024;
 
 function validateZipFile(file: File): string | null {
   const isZipExt = file.name.toLowerCase().endsWith('.zip');
-  const isZipMime = ['application/zip', 'application/x-zip-compressed', 'multipart/x-zip']
-    .includes(file.type);
-  if (!isZipExt || (file.type && !isZipMime)) {
+  if (!isZipExt) {
     return 'Only .zip files are supported.';
   }
   if (file.size > MAX_UPLOAD_BYTES) {
@@ -681,19 +680,41 @@ export default function ProjectsPage() {
     name: '', description: '', source_type: 'upload', github_url: '',
   });
   const [uploadFile, setUploadFile] = useState<File | null>(null);
+  const [uploadCheckStatus, setUploadCheckStatus] = useState<'idle' | 'checking' | 'valid'>('idle');
   const [uploadDragActive, setUploadDragActive] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const uploadValidationRunRef = useRef(0);
+
+  const clearUploadSelection = () => {
+    uploadValidationRunRef.current += 1;
+    setUploadFile(null);
+    setUploadCheckStatus('idle');
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
 
   const handleFilePicked = (picked: File | null | undefined) => {
     if (!picked) return;
     const err = validateZipFile(picked);
     if (err) {
       setFormError(err);
-      setUploadFile(null);
+      clearUploadSelection();
       return;
     }
-    setFormError('');
+    const validationRun = ++uploadValidationRunRef.current;
     setUploadFile(picked);
+    setUploadCheckStatus('checking');
+    setFormError('');
+    void validateZipContents(picked).then((result) => {
+      if (validationRun !== uploadValidationRunRef.current) return;
+      if (result.valid) {
+        setUploadCheckStatus('valid');
+        return;
+      }
+      setUploadFile(null);
+      setUploadCheckStatus('idle');
+      setFormError(result.message);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    });
   };
 
   const load = useCallback(async () => {
@@ -727,6 +748,9 @@ export default function ProjectsPage() {
     if (form.source_type === 'github' && !form.github_url.trim()) {
       setFormError('GitHub URL is required.'); return;
     }
+    if (form.source_type === 'upload' && uploadCheckStatus === 'checking') {
+      setFormError('Checking ZIP contents…'); return;
+    }
     if (form.source_type === 'upload' && !uploadFile) {
       setFormError('Please select a .zip file to upload.'); return;
     }
@@ -755,7 +779,7 @@ export default function ProjectsPage() {
       setProjects((prev) => [finalProject, ...prev]);
       setShowModal(false);
       setForm({ name: '', description: '', source_type: 'upload', github_url: '' });
-      setUploadFile(null);
+      clearUploadSelection();
     } catch (e: any) {
       setFormError(e.message || 'Failed to create project');
     } finally {
@@ -1008,7 +1032,7 @@ export default function ProjectsPage() {
                   <p className="text-gray-400 text-xs">Add a project to InfraGenie</p>
                 </div>
               </div>
-              <button onClick={() => { setShowModal(false); setFormError(''); setUploadFile(null); }} className="text-gray-400 hover:text-gray-600 cursor-pointer">
+              <button onClick={() => { setShowModal(false); setFormError(''); clearUploadSelection(); }} className="text-gray-400 hover:text-gray-600 cursor-pointer">
                 <X size={18} />
               </button>
             </div>
@@ -1027,7 +1051,12 @@ export default function ProjectsPage() {
               </div>
               <div>
                 <label className="text-gray-500 text-xs font-medium block mb-1.5">Source Type</label>
-                <select value={form.source_type} onChange={(e) => setForm({ ...form, source_type: e.target.value, github_url: '' })}
+                <select value={form.source_type} onChange={(e) => {
+                  const sourceType = e.target.value;
+                  if (sourceType !== 'upload') clearUploadSelection();
+                  setForm({ ...form, source_type: sourceType, github_url: '' });
+                  setFormError('');
+                }}
                   className="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-700 focus:outline-none focus:border-[#1e3a7a] cursor-pointer">
                   <option value="upload">File Upload</option>
                   <option value="github">GitHub</option>
@@ -1071,7 +1100,7 @@ export default function ProjectsPage() {
                         <span className="text-gray-400 text-xs">({(uploadFile.size / (1024 * 1024)).toFixed(1)} MB)</span>
                         <button
                           type="button"
-                          onClick={(e) => { e.stopPropagation(); setUploadFile(null); if (fileInputRef.current) fileInputRef.current.value = ''; }}
+                          onClick={(e) => { e.stopPropagation(); clearUploadSelection(); }}
                           className="text-gray-400 hover:text-red-500 cursor-pointer"
                         >
                           <X size={13} />
@@ -1084,16 +1113,24 @@ export default function ProjectsPage() {
                       </>
                     )}
                   </div>
+                  {uploadCheckStatus === 'checking' && (
+                    <p className="text-[#1e3a7a] text-[10px] mt-1.5 flex items-center gap-1">
+                      <Loader size={10} className="animate-spin" /> Checking ZIP contents…
+                    </p>
+                  )}
+                  <p className="text-gray-400 text-[10px] mt-1.5 leading-relaxed">
+                    Exclude dependency folders such as node_modules and Python virtual environments. Keep your source files, manifests, and lockfiles.
+                  </p>
                 </div>
               )}
               {formError && <p className="text-red-500 text-xs">{formError}</p>}
             </div>
             <div className="flex items-center justify-end gap-3 mt-6 pt-4 border-t border-gray-100">
-              <button onClick={() => { setShowModal(false); setFormError(''); setUploadFile(null); }}
+              <button onClick={() => { setShowModal(false); setFormError(''); clearUploadSelection(); }}
                 className="px-4 py-2 rounded-lg border border-gray-200 text-gray-500 text-sm font-medium hover:bg-gray-50 cursor-pointer transition-colors">
                 Cancel
               </button>
-              <button onClick={handleCreate} disabled={creating}
+              <button onClick={handleCreate} disabled={creating || uploadCheckStatus === 'checking'}
                 className="px-5 py-2 rounded-lg bg-[#c9692a] text-white text-sm font-semibold hover:bg-[#b85820] cursor-pointer transition-colors disabled:opacity-60 disabled:cursor-not-allowed flex items-center gap-2">
                 {creating && <Loader size={13} className="animate-spin" />}
                 {creating ? 'Creating…' : 'Create Project'}
