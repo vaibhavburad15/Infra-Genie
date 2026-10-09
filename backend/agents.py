@@ -18,7 +18,8 @@ so the live analysis terminal shows what the model is actually generating.
 """
 import asyncio
 import json
-from typing import TypedDict, Annotated, Callable, Optional
+import re
+from typing import Any, TypedDict, Annotated, Callable, Mapping, Optional
 import operator
 
 from langgraph.graph import StateGraph, END
@@ -38,7 +39,7 @@ class AgentState(TypedDict):
     discovered_apps: list
     strategy: str
     docker_artifacts: str
-    terraform_artifacts: str
+    terraform_artifacts: Any
     kubernetes_artifacts: str
     cicd_artifacts: str
     architecture_notes: str
@@ -59,11 +60,11 @@ _CONCISE = (
 )
 
 
-def _log(state: AgentState, agent: str, result: str) -> dict:
+def _log(state: Mapping[str, Any], agent: str, result: str) -> dict:
     return {"agent_logs": [{"agent": agent, "result": result[:500]}]}
 
 
-def _emit(state: AgentState, agent: str, message: str, level: str = "info") -> None:
+def _emit(state: Mapping[str, Any], agent: str, message: str, level: str = "info") -> None:
     cb = state.get("on_log")
     if cb:
         try:
@@ -72,7 +73,7 @@ def _emit(state: AgentState, agent: str, message: str, level: str = "info") -> N
             pass
 
 
-async def _streamed_ask(state: AgentState, agent_name: str, system: str, user: str,
+async def _streamed_ask(state: Mapping[str, Any], agent_name: str, system: str, user: str,
                        max_tokens: int = 1500) -> str:
     """Ask the LLM and stream tokens back to the live terminal as they arrive.
 
@@ -248,16 +249,106 @@ async def docker_agent(state: AgentState) -> dict:
     return {"docker_artifacts": result, **_log(state, "Docker Agent", result[:400])}
 
 
-async def terraform_agent(state: AgentState) -> dict:
-    _emit(state, "Terraform Agent", "Generating Terraform IaC…")
+def _parse_terraform_json_output(raw: str, state: Mapping[str, Any]) -> dict[str, Any]:
+    """Extract Terraform files and their resource specification from model JSON.
+
+    The preferred response is ``{"files": {"main.tf": "..."},
+    "resource_specifications": [...]}``. The older ``{"terraform": "..."}``
+    form and raw HCL remain readable so saved projects can be upgraded without
+    rerunning project analysis. Planning performs strict validation before use.
+    """
+    text = (raw or "").strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```(?:json)?\s*\n?", "", text, flags=re.IGNORECASE)
+        text = re.sub(r"\n?```\s*$", "", text).strip()
+
+    try:
+        parsed = json.loads(text)
+    except (json.JSONDecodeError, TypeError):
+        parsed = None
+
+    if isinstance(parsed, dict):
+        files = parsed.get("files")
+        if isinstance(files, dict):
+            normalized_files = {
+                str(path): content
+                for path, content in files.items()
+                if isinstance(path, str) and isinstance(content, str)
+            }
+            if len(normalized_files) == len(files):
+                _emit(state, "Terraform Agent", "Structured Terraform files received.", "success")
+                return {
+                    "files": normalized_files,
+                    "resource_specifications": parsed.get("resource_specifications"),
+                }
+        legacy_hcl = parsed.get("terraform")
+        if isinstance(legacy_hcl, str):
+            _emit(state, "Terraform Agent", "Legacy single-file Terraform response received.", "info")
+            return {"files": {"main.tf": legacy_hcl}, "resource_specifications": None}
+
+    # Keep the original response intact. Planning validation will reject prose,
+    # README content, malformed JSON, and empty output and request a retry.
+    _emit(state, "Terraform Agent", "Response was not structured JSON; preserving it for validation.", "warning")
+    return {"files": {"main.tf": raw or ""}, "resource_specifications": None}
+
+
+async def terraform_agent(state: Mapping[str, Any]) -> dict:
+    _emit(state, "Terraform Agent", "Generating AWS Terraform files from the supplied architecture…")
+    analysis = state.get("analysis") or {}
+    details = state.get("source_code_summary") or {}
+    architecture = state.get("architecture")
+    if architecture is None:
+        architecture = _parse_architecture(state.get("architecture_notes", ""))
+    apps = state.get("discovered_apps") or []
+    context = {
+        "project": state.get("project_name"),
+        "analysis": analysis,
+        "project_details": details,
+        "architecture": architecture,
+        "deployment_strategy": state.get("strategy"),
+        "application_services": apps,
+        "deployment": state.get("deployment") or {},
+        "aws_discovery": state.get("aws_discovery") or {},
+        "required_application_components": state.get("required_application_components") or [
+            str(app.get("name")) for app in apps
+            if isinstance(app, dict) and app.get("name")
+            and app.get("type") in {"backend", "frontend", "worker", "static"}
+        ],
+        "previous_validation_errors": state.get("terraform_generation_errors") or [],
+    }
     sys_prompt = (
-        "You are a Terraform AI Agent. Generate HCL for the project - provider, "
-        "compute, networking, variables. Return the .tf file contents directly. "
-        "Use AWS as the default provider."
+        "You are the Terraform artifact generation agent for an AWS deployment. "
+        "Use only the supplied project analysis, proposed architecture, deployment "
+        "requirements, region, and AWS discovery snapshot. Generate actual Terraform "
+        "infrastructure that implements that architecture. Do not generate application "
+        "source code or documentation. Do not invent components or fabricate resources "
+        "to satisfy a resource count. Include only files required by this architecture.\n\n"
+        "Return exactly one JSON object with this shape:\n"
+        '{"files":{"main.tf":"...","providers.tf":"..."},'
+        '"resource_specifications":[{"type":"aws_...","name":"...",'
+        '"components":["service name"],"purpose":"..."}]}\n\n'
+        "Requirements:\n"
+        "- Every file value must contain only HCL. Put at least one real resource \"aws_*\" block in main.tf.\n"
+        "- Include a terraform.required_providers declaration for hashicorp/aws and one provider \"aws\" block.\n"
+        "- Declare each resource block exactly once in resource_specifications with matching type and name.\n"
+        "- Each required_application_component must be covered in a resource specification's components list. "
+        "A single resource may cover multiple components when the architecture does so.\n"
+        "- The resource count must follow the proposed architecture; one resource is valid when sufficient.\n"
+        "- Set the AWS provider region to the supplied deployment region. Do not hardcode a different region.\n"
+        "- If retry feedback is present, correct every listed validation error.\n"
+        "- Never return Markdown, README text, directory trees, JavaScript, or explanatory prose.\n"
+        "- Never include credentials, provisioners, local_file, external data sources, or non-AWS providers."
     )
-    user = _summary_block(state)
-    result = await _streamed_ask(state, "Terraform Agent", sys_prompt, user, max_tokens=1800)
-    return {"terraform_artifacts": result, **_log(state, "Terraform Agent", result[:400])}
+    raw = await _streamed_ask(
+        state, "Terraform Agent", sys_prompt,
+        json.dumps(context, ensure_ascii=False, sort_keys=True, default=str),
+        max_tokens=5000,
+    )
+    terraform_artifacts = _parse_terraform_json_output(raw, state)
+    return {
+        "terraform_artifacts": terraform_artifacts,
+        **_log(state, "Terraform Agent", json.dumps(terraform_artifacts, default=str)[:400]),
+    }
 
 
 async def kubernetes_agent(state: AgentState) -> dict:
@@ -441,11 +532,10 @@ async def aggregate_results(state: AgentState) -> dict:
 
 async def run_all_agents(state: AgentState) -> dict:
     _emit(state, "InfraGenie",
-          "Launching 8 specialist agents in parallel (real-time LLM tokens will appear next)…")
+          "Launching 7 specialist agents in parallel; Terraform follows the architecture result…")
 
     agent_fns = [
         ("Docker Agent", "docker_artifacts", docker_agent),
-        ("Terraform Agent", "terraform_artifacts", terraform_agent),
         ("Kubernetes Agent", "kubernetes_artifacts", kubernetes_agent),
         ("CI/CD Agent", "cicd_artifacts", cicd_agent),
         ("Architecture Agent", "architecture_notes", architecture_agent),
@@ -481,11 +571,29 @@ async def run_all_agents(state: AgentState) -> dict:
 
     if failures == len(agent_fns):
         raise LLMUnavailableError(
-            "LLM is not working - all 8 specialist agents failed to get a response."
+            "LLM is not working - all 7 parallel specialist agents failed to get a response."
         )
+
+    # Terraform generation runs after Architecture so it can consume the
+    # proposed graph. Deployment planning regenerates it with the selected
+    # AWS region and discovery snapshot.
+    terraform_state = {**state, **merged}
+    try:
+        terraform_result = await terraform_agent(terraform_state)
+        logs.extend(terraform_result.pop("agent_logs", []))
+        merged.update(terraform_result)
+    except Exception as exc:
+        failures += 1
+        _emit(state, "Terraform Agent", "Failed: " + str(exc), "error")
+        merged["terraform_artifacts"] = {
+            "files": {},
+            "resource_specifications": None,
+            "generation_error": str(exc),
+        }
+        logs.append({"agent": "Terraform Agent", "result": "FAILED: " + str(exc)})
     if failures:
         _emit(state, "InfraGenie",
-              f"{failures}/{len(agent_fns)} agent(s) failed - continuing with partial results.",
+              f"{failures}/8 agent(s) failed - continuing with partial results.",
               "error")
 
     merged["agent_logs"] = logs

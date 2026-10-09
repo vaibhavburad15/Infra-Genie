@@ -184,7 +184,7 @@ export interface DeploymentPlan {
   discovered_apps?: DiscoveredApp[];
   strategy?: string;
   docker?: string;
-  terraform?: string;
+  terraform?: TerraformArtifact | string;
   kubernetes?: string;
   cicd?: string;
   /** Structured graph (new) or plain-text string (legacy projects) */
@@ -192,6 +192,16 @@ export interface DeploymentPlan {
   monitoring?: string;
   security?: string;
   cost_estimate?: string;
+}
+
+export interface TerraformArtifact {
+  files: Record<string, string>;
+  resource_specifications?: Array<{
+    type: string;
+    name: string;
+    components: string[];
+    purpose?: string;
+  }> | null;
 }
 
 // Shape of the rich static-analysis result attached to a project after analysis.

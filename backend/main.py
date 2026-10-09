@@ -1,18 +1,3 @@
-"""
-InfraGenie - FastAPI Backend (multi-tenant SaaS shape).
-
-Routes:
-  Auth     : /auth/{register, login, me, email-otp/{request, verify}}
-  Orgs     : /orgs (list/create), /orgs/{id}, /orgs/{id}/members, /orgs/{id}/switch
-  Audit    : /audit-log
-  Projects : /projects (CRUD, upload, analyze)
-  Deploys  : /api/deployments, /api/deployments/{did}[/{plan,approve}]
-  Reports  : /projects/{pid}/reports
-  Metrics  : /metrics/overview   (for Monitoring / Security / Cost / etc.)
-  AI       : POST /stream/insights (SSE), /projects/{pid}/logs/stream (SSE)
-
-v3 changes highlighted with `# v3` comments.
-"""
 import os
 import signal
 import sys
@@ -563,8 +548,8 @@ async def create_deployment(payload: DeploymentCreate,
         raise HTTPException(404, "Project not found")
     if project.status not in (ProjectStatus.ready, ProjectStatus.deployed):
         raise HTTPException(409, "Analyze the project before creating a deployment plan.")
-    if not project.deployment_plan or not project.deployment_plan.get("terraform"):
-        raise HTTPException(409, "Project Terraform artifacts are not ready. Re-run project analysis.")
+    if not project.deployment_plan:
+        raise HTTPException(409, "Project analysis artifacts are not ready. Re-run project analysis.")
 
     account = (await db.execute(select(CloudAccount).where(
         CloudAccount.id == payload.cloud_account_id,
@@ -703,14 +688,16 @@ async def approve_deployment_v2(deployment_id: UUID, payload: ApproveDeployment,
             raise HTTPException(403, "Only the deployment owner or an org admin can approve this deployment.")
 
     # Idempotency: if already approved, return current state rather than erroring.
-    if deployment.status == DeploymentStatus.approved and payload.approved:
+    current_status = deployment.status
+    if current_status == DeploymentStatus.approved and payload.approved:
         return deployment
 
     # Only plans in PLAN_READY or AWAITING_APPROVAL may be actioned.
-    if deployment.status not in (DeploymentStatus.plan_ready, DeploymentStatus.awaiting_approval):
+    if current_status not in (DeploymentStatus.plan_ready, DeploymentStatus.awaiting_approval):
+        status_label = current_status.value if current_status is not None else "unknown"
         raise HTTPException(
             409,
-            f"Cannot approve a deployment in '{deployment.status.value}' status. "
+            f"Cannot approve a deployment in '{status_label}' status. "
             "Only deployments in 'awaiting_approval' or 'plan_ready' status can be approved.",
         )
 

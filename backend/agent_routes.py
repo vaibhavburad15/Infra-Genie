@@ -111,11 +111,12 @@ AGENT_ROSTER: List[dict] = [
         "name": "Terraform Agent",
         "role": "Designs cloud infrastructure",
         "category": "artifacts",
-        "outputs": ["modules/*.tf", "variables.tf", "outputs.tf"],
+        "outputs": ["main.tf", "providers.tf", "variables.tf", "outputs.tf"],
         "description": (
-            "Produces AWS-first Terraform modules — VPC, subnets, IAM, ECS/EKS, "
-            "RDS as applicable. Structured for review and safe to `terraform "
-            "plan` before apply."
+            "Generates structured AWS Terraform files from the saved project "
+            "architecture and deployment requirements. Planning adds the selected "
+            "region and AWS discovery snapshot, then validates resources before "
+            "running a read-only `terraform plan`."
         ),
         "optional": True,
         "model": _LLM_MODEL,

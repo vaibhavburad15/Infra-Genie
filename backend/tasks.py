@@ -556,8 +556,9 @@ def task_run_deployment(deployment_id: str) -> None:
         deployment.terraform_plan = fresh.display
         deployment.completed_at = finished
         deployment.updated_at = finished
-        if deployment.started_at:
-            deployment.duration_seconds = int((finished - deployment.started_at).total_seconds())
+        started_at = deployment.started_at
+        if started_at is not None:
+            deployment.duration_seconds = int((finished - started_at).total_seconds())
         deployment.error_message = None
         project.status = ProjectStatus.deployed
         db.add(AuditLog(
@@ -604,8 +605,8 @@ def task_plan_deployment(deployment_id: str) -> None:
         CloudAccount, CloudAccountStatus, Deployment, DeploymentStatus, Project,
     )
     from deployment_planner import (
-        TerraformError, assume_role_environment, generate_workspace,
-        run_terraform_plan,
+        TerraformError, assume_role_environment, build_terraform_generation_context,
+        generate_terraform_artifacts, generate_workspace, run_terraform_plan,
     )
 
     _log = _logging.getLogger(__name__)
@@ -650,16 +651,26 @@ def task_plan_deployment(deployment_id: str) -> None:
                 "Project artifacts are not in a supported format.",
                 error_kind="invalid_artifact",
             )
-        if not artifacts.get("terraform"):
-            raise TerraformError(
-                "Project has no Terraform artifacts. Re-run project analysis.",
-                error_kind="invalid_artifact",
-            )
-
         # ── Generate workspace ────────────────────────────────────────────────
         # Use the region from the deployment record if set (allows override),
         # otherwise fall back to the cloud account's region.
         effective_region = deployment.region or account.region
+        deployment.region = effective_region
+        generation_context = build_terraform_generation_context(
+            project=project,
+            deployment=deployment,
+            account=account,
+            artifacts=artifacts,
+        )
+        # Terraform is regenerated with the selected region and current AWS
+        # discovery snapshot. Project analysis and architecture are reused.
+        generated_terraform = asyncio.run(
+            generate_terraform_artifacts(generation_context)
+        )
+        artifacts = {**artifacts, "terraform": generated_terraform}
+        deployment.artifacts = artifacts
+        db.commit()
+
         workspace = generate_workspace(
             deployment_id=deployment.id,
             project_name=project.name,
@@ -668,10 +679,10 @@ def task_plan_deployment(deployment_id: str) -> None:
             region=effective_region,
             discovery_ran_at=(account.discovery_ran_at.isoformat() + "Z"),
             discovery_result=account.discovery_result or {},
+            required_components=generation_context.get("required_application_components") or [],
         )
         deployment.terraform_workspace = str(workspace)
         deployment.artifact_dir = str(workspace)
-        deployment.region = effective_region
         deployment.updated_at = datetime.utcnow()
         db.commit()
 
@@ -731,16 +742,14 @@ def task_plan_deployment(deployment_id: str) -> None:
             deployment = db.query(Deployment).filter(Deployment.id == deployment_id).first()
             if deployment:
                 deployment.status = DeploymentStatus.failed
-                # Build a user-friendly message keyed on error_kind
+                # Build a user-friendly message keyed on error_kind.
+                # For invalid_artifact, fmt_failed, and terraform_artifact_missing_resources
+                # the TerraformError carries specific diagnostics — surface them directly.
                 kind = getattr(exc, "error_kind", "unknown")
                 _kind_messages = {
                     "missing_binary": (
                         "Terraform CLI is not installed on the worker. "
                         "Install Terraform and restart the worker."
-                    ),
-                    "invalid_artifact": (
-                        "The generated Terraform configuration is invalid. "
-                        "Re-run project analysis to regenerate the artifacts."
                     ),
                     "init_failed": (
                         "Terraform initialization failed. Review the Terraform "
@@ -767,7 +776,27 @@ def task_plan_deployment(deployment_id: str) -> None:
                         "experiencing delays. Try again or increase the timeout."
                     ),
                 }
-                user_message = _kind_messages.get(kind, str(exc)[:12000])
+                # These error kinds carry precise per-instance diagnostics —
+                # use the exception message directly rather than a generic fallback.
+                _use_exc_message_directly = {
+                    "invalid_artifact",
+                    "fmt_failed",
+                    "terraform_artifact_missing_resources",
+                }
+                if kind in _use_exc_message_directly:
+                    # Build a rich message that includes user_message and suggestion
+                    # when those fields are populated (new TerraformError fields).
+                    user_msg = getattr(exc, "user_message", "") or str(exc)
+                    suggestion = getattr(exc, "suggestion", "")
+                    stage = getattr(exc, "stage", "")
+                    parts = [user_msg]
+                    if stage:
+                        parts.append(f"Stage: {stage}.")
+                    if suggestion:
+                        parts.append(suggestion)
+                    user_message = " ".join(p.strip(" .") for p in parts if p) + "."
+                else:
+                    user_message = _kind_messages.get(kind, str(exc)[:12000])
                 deployment.error_message = user_message
                 deployment.updated_at = datetime.utcnow()
                 db.commit()

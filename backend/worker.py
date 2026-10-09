@@ -195,8 +195,10 @@ if sys.platform == "win32":
         def cancel_death_penalty(self):
             pass
 
-    Worker.death_penalty_class = _NoopDeathPenalty
-    SimpleWorker.death_penalty_class = _NoopDeathPenalty
+    # RQ's stubs type this class attribute too narrowly; the subclass is the
+    # intended runtime replacement for Windows workers.
+    setattr(Worker, "death_penalty_class", _NoopDeathPenalty)
+    setattr(SimpleWorker, "death_penalty_class", _NoopDeathPenalty)
 
 
 # ──────────────────────────────────────────────
