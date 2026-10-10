@@ -15,15 +15,13 @@ import DeploymentReviewPage from '@/pages/DeploymentReviewPage';
 import AgentsPage from '@/pages/AgentsPage';
 import MonitoringPage from '@/pages/MonitoringPage';
 import InsightsPage from '@/pages/InsightsPage';
-import InfrastructurePage from '@/pages/InfrastructurePage';
 import SecurityPage from '@/pages/SecurityPage';
 import CostPage from '@/pages/CostPage';
-import AutomationPage from '@/pages/AutomationPage';
 import ReportsPage from '@/pages/ReportsPage';
 import SettingsPage from '@/pages/SettingsPage';
 import CloudAccountsPage from '@/pages/CloudAccountsPage';
 
-type Page = 'dashboard' | 'projects' | 'deployments' | 'agents' | 'monitoring' | 'insights' | 'infrastructure' | 'pipelines' | 'security' | 'cost' | 'automation' | 'reports' | 'settings' | 'cloud-accounts';
+type Page = 'dashboard' | 'projects' | 'deployments' | 'agents' | 'monitoring' | 'insights' | 'pipelines' | 'security' | 'cost' | 'reports' | 'settings' | 'cloud-accounts';
 
 /** Sub-page state for pages that need a selected-item context (e.g. review a deployment). */
 interface SubPageState {
@@ -35,14 +33,12 @@ interface SubPageState {
 const pageMeta: Record<Page, { title: string; subtitle: string }> = {
   dashboard: { title: 'Overview', subtitle: 'Infrastructure overview and real-time status' },
   projects: { title: 'Projects', subtitle: 'Manage your cloud projects and services' },
-  infrastructure: { title: 'Infrastructure', subtitle: 'Cloud resources and infrastructure management' },
   pipelines: { title: 'Pipelines', subtitle: 'CI/CD pipeline management and history' },
   deployments: { title: 'Deployments', subtitle: 'Deployment pipelines and history' },
   agents: { title: 'AI Agents', subtitle: 'Autonomous infrastructure management agents' },
   monitoring: { title: 'Monitoring', subtitle: 'Real-time metrics, health, and alerting' },
   security: { title: 'Security', subtitle: 'Vulnerability scanning and compliance' },
   cost: { title: 'Cost Intelligence', subtitle: 'Cloud spend analysis and optimization' },
-  automation: { title: 'Automation', subtitle: 'Infrastructure automation rules' },
   insights: { title: 'AI Insights', subtitle: 'AI-powered recommendations and optimization' },
   reports: { title: 'Reports', subtitle: 'Generate and download infrastructure reports' },
   settings: { title: 'Settings', subtitle: 'Manage your account and preferences' },
@@ -161,11 +157,9 @@ function Dashboard() {
       case 'monitoring': return <MonitoringPage />;
       case 'security': return <SecurityPage />;
       case 'cost': return <CostPage />;
-      case 'automation': return <AutomationPage />;
       case 'insights': return <InsightsPage />;
       case 'reports': return <ReportsPage />;
       case 'settings': return <SettingsPage />;
-      case 'infrastructure': return <InfrastructurePage />;
       case 'cloud-accounts': return <CloudAccountsPage />;
       default: return <DashboardPage />;
     }

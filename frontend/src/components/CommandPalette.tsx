@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import {
-  Search, LayoutDashboard, Boxes, Server, GitBranch, Rocket,
-  Bot, LineChart, ShieldCheck, DollarSign, Zap, Sparkles, FileText,
+  Search, LayoutDashboard, Boxes, GitBranch, Rocket,
+  Bot, LineChart, ShieldCheck, DollarSign, Sparkles, FileText,
   Settings, ArrowRight, CornerDownLeft, X, User
 } from 'lucide-react';
 
@@ -49,15 +49,6 @@ export default function CommandPalette({
       icon: Boxes,
       action: () => { onNavigate('projects'); onClose(); },
       keywords: ['apps', 'services', 'cloud'],
-    },
-    {
-      id: 'infrastructure',
-      title: 'Infrastructure',
-      subtitle: 'Cloud resources and infrastructure management',
-      category: 'Pages',
-      icon: Server,
-      action: () => { onNavigate('infrastructure'); onClose(); },
-      keywords: ['aws', 'kubernetes', 'k8s', 'terraform', 'nodes', 'vms'],
     },
     {
       id: 'pipelines',
@@ -112,15 +103,6 @@ export default function CommandPalette({
       icon: DollarSign,
       action: () => { onNavigate('cost'); onClose(); },
       keywords: ['spend', 'budget', 'billing', 'cloud cost'],
-    },
-    {
-      id: 'automation',
-      title: 'Automation',
-      subtitle: 'Infrastructure automation rules and scripts',
-      category: 'Pages',
-      icon: Zap,
-      action: () => { onNavigate('automation'); onClose(); },
-      keywords: ['scripts', 'auto-scaling', 'triggers'],
     },
     {
       id: 'insights',
