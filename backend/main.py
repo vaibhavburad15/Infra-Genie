@@ -33,7 +33,6 @@ from models import (
     ProjectStatus, DeploymentStatus, CloudAccountStatus, OrgRole,
 )
 from tasks import get_queue, get_redis_conn, task_analyze_project, task_plan_deployment
-from llm import chat_stream
 from zip_validation import ZipValidationError, validate_zip_stream
 
 
@@ -825,31 +824,6 @@ async def metrics_overview(current_user: User = Depends(require_user),
         "with_docker": has_docker,
         "reports_total": len(reports),
     }
-
-
-# ── Streaming AI chat (owner-scoped) ─────────────────────────────────────────
-
-@app.get("/stream/insights", tags=["ai"])
-async def stream_insights(project_id: str, question: str,
-                          current_user: User = Depends(require_user),
-                          db: AsyncSession = Depends(get_db)):
-    org = await resolve_current_org(current_user, db)
-    res = await db.execute(select(Project).where(
-        Project.id == project_id, Project.org_id == org.id))
-    if not res.scalar_one_or_none():
-        raise HTTPException(404, "Project not found")
-
-    async def generate():
-        msgs = [
-            {"role": "system", "content":
-             "You are InfraGenie - an AI infrastructure expert. Answer questions "
-             "about deployment, monitoring, cost, and security for the user's project."},
-            {"role": "user", "content": f"Project ID: {project_id}\nQuestion: {question}"},
-        ]
-        async for chunk in chat_stream(msgs):
-            yield f"data: {chunk}\n\n"
-        yield "data: [DONE]\n\n"
-    return StreamingResponse(generate(), media_type="text/event-stream")
 
 
 # ── Log streaming ─────────────────────────────────────────────────────────────

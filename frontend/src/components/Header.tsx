@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import {
   Search, Bell, Command, LogOut, Moon,
-  Settings as SettingsIcon, PanelLeft, Sparkles, Zap, User, Shield,
+  Settings as SettingsIcon, PanelLeft, Zap, User, Shield,
 } from 'lucide-react';
 import { useAuth } from '@/context/useAuth';
 import type { UserRole } from '@/api';
@@ -43,16 +43,12 @@ export default function Header({
   onNavigate,
   sidebarOpen,
   onToggleSidebar,
-  aiOpen,
-  onToggleAI,
 }: {
   title: string;
   subtitle: string;
   onNavigate?: (p: 'settings' | any) => void;
   sidebarOpen?: boolean;
   onToggleSidebar?: () => void;
-  aiOpen?: boolean;
-  onToggleAI?: () => void;
 }) {
   const { user, logout } = useAuth();
   const [open, setOpen] = useState(false);
@@ -144,41 +140,11 @@ export default function Header({
         isOpen={searchOpen}
         onClose={() => setSearchOpen(false)}
         onNavigate={(p) => onNavigate?.(p)}
-        onToggleAI={onToggleAI}
       />
 
       {/* ── Right: actions + user ── */}
       <div className="flex items-center gap-1.5">
 
-        {/* AI Assistant toggle */}
-        <button
-          onClick={onToggleAI}
-          aria-pressed={aiOpen}
-          title={aiOpen ? 'Close AI Assistant' : 'Open AI Assistant'}
-          className={`
-            flex items-center gap-2 h-9 px-3.5 rounded-xl text-xs font-semibold whitespace-nowrap flex-shrink-0
-            border transition-all duration-150 cursor-pointer select-none
-            ${aiOpen
-              ? 'bg-[#c9692a] text-white border-[#c9692a] shadow-xs'
-              : 'bg-white hover:bg-slate-50 text-slate-700 border-slate-200 shadow-2xs hover:border-slate-300'
-            }
-          `}
-        >
-          <Sparkles
-            size={14}
-            className={aiOpen ? 'text-amber-200 animate-pulse' : 'text-[#c9692a]'}
-          />
-          <span>AI Assistant</span>
-          {aiOpen ? (
-            <span className="w-2 h-2 rounded-full bg-amber-200 animate-pulse ml-0.5" />
-          ) : (
-            <span className="text-[9.5px] font-bold px-1.5 py-0.5 rounded-md bg-[#c9692a]/10 text-[#c9692a]">
-              AI
-            </span>
-          )}
-        </button>
-
-        <div className="w-px h-5 bg-gray-200/80 mx-1 hidden sm:block" />
 
         {/* Notifications */}
         <button className="relative w-9 h-9 flex items-center justify-center rounded-xl text-slate-400 hover:text-[#1e3a7a] hover:bg-slate-100 border border-transparent hover:border-slate-200/60 transition-all duration-150 cursor-pointer">

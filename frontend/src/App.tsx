@@ -6,7 +6,6 @@ import RegisterPage from '@/pages/RegisterPage';
 import LandingPage from '@/pages/LandingPage';
 import Sidebar from '@/components/Sidebar';
 import Header from '@/components/Header';
-import AIAssistant from '@/components/AIAssistant';
 import DashboardPage from '@/pages/DashboardPage';
 import ProjectsPage from '@/pages/ProjectsPage';
 import PipelinesPage from '@/pages/PipelinesPage';
@@ -110,7 +109,6 @@ function Dashboard() {
   const [activePage, setActivePage] = useState<Page>('dashboard');
   const [subPage, setSubPage] = useState<SubPageState | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [aiOpen, setAiOpen] = useState(true);
 
   /** Navigate to the deployment review sub-page. */
   const openDeploymentReview = (deploymentId: string, projectName?: string) => {
@@ -175,12 +173,9 @@ function Dashboard() {
           onNavigate={handleNavigate}
           sidebarOpen={sidebarOpen}
           onToggleSidebar={() => setSidebarOpen((v) => !v)}
-          aiOpen={aiOpen}
-          onToggleAI={() => setAiOpen((v) => !v)}
         />
         <main className="flex-1 overflow-hidden">{renderPage()}</main>
       </div>
-      <AIAssistant isOpen={aiOpen} />
     </div>
   );
 }

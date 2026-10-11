@@ -547,51 +547,6 @@ export async function setAgentEnabled(agentId: string, enabled: boolean): Promis
   });
 }
 
-// ── Streaming AI insights ────────────────────────────────────────────────
-
-export async function streamInsights(opts: {
-  projectId: string;
-  question: string;
-  onChunk?: (text: string) => void;
-  onDone?: () => void;
-  onError?: (err: unknown) => void;
-}) {
-  const { projectId, question, onChunk, onDone, onError } = opts;
-  const token = localStorage.getItem('access_token');
-  const url = `${BASE_URL}/stream/insights?project_id=${encodeURIComponent(
-    projectId
-  )}&question=${encodeURIComponent(question)}`;
-
-  try {
-    const response = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
-    if (!response.ok || !response.body) throw new Error(`Stream request failed: ${response.status}`);
-
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
-
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n\n');
-      buffer = lines.pop() || '';
-
-      for (const line of lines) {
-        if (!line.startsWith('data: ')) continue;
-        const payload = line.slice(6);
-        if (payload === '[DONE]') {
-          onDone?.();
-          return;
-        }
-        onChunk?.(payload);
-      }
-    }
-  } catch (err) {
-    onError?.(err);
-  }
-}
-
 // ── Health check ─────────────────────────────────────────────────────────
 
 export async function checkHealth() {

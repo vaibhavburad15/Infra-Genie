@@ -19,12 +19,10 @@ export default function CommandPalette({
   isOpen,
   onClose,
   onNavigate,
-  onToggleAI,
 }: {
   isOpen: boolean;
   onClose: () => void;
   onNavigate: (page: string) => void;
-  onToggleAI?: () => void;
 }) {
   const [query, setQuery] = useState('');
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -130,15 +128,6 @@ export default function CommandPalette({
       icon: Settings,
       action: () => { onNavigate('settings'); onClose(); },
       keywords: ['account', 'profile', 'org', 'users', 'billing'],
-    },
-    {
-      id: 'action-ai',
-      title: 'Toggle AI Assistant',
-      subtitle: 'Open or close the interactive InfraGenie AI Assistant panel',
-      category: 'Quick Actions',
-      icon: Sparkles,
-      action: () => { onToggleAI?.(); onClose(); },
-      keywords: ['assistant', 'ai', 'chat', 'help'],
     },
     {
       id: 'action-profile',
