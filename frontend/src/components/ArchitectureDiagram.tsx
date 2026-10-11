@@ -34,7 +34,7 @@ const NODE_STYLES: Record<
 > = {
   gateway:    { bg: '#fef3c7', border: '#f59e0b', text: '#92400e', icon: '🌐' },
   frontend:   { bg: '#ede9fe', border: '#7c3aed', text: '#4c1d95', icon: '🖥️' },
-  service:    { bg: '#dbeafe', border: '#2563eb', text: '#1e3a7a', icon: '⚙️' },
+  service:    { bg: '#dbeafe', border: '#2563eb', text: '#293b7a', icon: '⚙️' },
   database:   { bg: '#d1fae5', border: '#059669', text: '#064e3b', icon: '🗄️' },
   cache:      { bg: '#fee2e2', border: '#dc2626', text: '#7f1d1d', icon: '⚡' },
   queue:      { bg: '#fce7f3', border: '#db2777', text: '#831843', icon: '📨' },
@@ -250,14 +250,14 @@ export default function ArchitectureDiagram({ graph }: Props) {
 
       {/* ── Scalability notes ── */}
       {graph.notes && graph.notes.length > 0 && (
-        <div className="bg-[#fdf3eb] border border-[#f0bc98] rounded-xl p-4">
-          <p className="text-[#c9692a] text-[10px] uppercase font-semibold tracking-wider mb-2.5 flex items-center gap-1.5">
+        <div className="bg-accent-50 border border-accent-200 rounded-xl p-4">
+          <p className="text-accent-700 text-[10px] uppercase font-semibold tracking-wider mb-2.5 flex items-center gap-1.5">
             ✦ Architecture Notes
           </p>
           <ul className="space-y-1.5">
             {graph.notes.map((note, i) => (
               <li key={i} className="flex items-start gap-2 text-xs text-gray-700 leading-relaxed">
-                <span className="text-[#c9692a] mt-0.5 flex-shrink-0">•</span>
+                <span className="text-accent-700 mt-0.5 flex-shrink-0">•</span>
                 {note}
               </li>
             ))}

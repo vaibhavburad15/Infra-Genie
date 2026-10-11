@@ -73,8 +73,8 @@ function statusBadgeClass(status: string): string {
   const map: Record<string, string> = {
     planning:          'bg-amber-50  text-amber-700  border-amber-200',
     draft:             'bg-gray-100  text-gray-600   border-gray-200',
-    plan_ready:        'bg-[#edf3fb] text-[#1e3a7a]  border-[#a8c1ea]',
-    awaiting_approval: 'bg-[#edf3fb] text-[#1e3a7a]  border-[#a8c1ea]',
+    plan_ready:        'bg-primary-50 text-primary  border-primary-200',
+    awaiting_approval: 'bg-primary-50 text-primary  border-primary-200',
     approved:          'bg-emerald-50 text-emerald-700 border-emerald-200',
     rejected:          'bg-gray-100  text-gray-600   border-gray-200',
     failed:            'bg-red-50    text-red-600    border-red-200',
@@ -186,8 +186,8 @@ export default function DeploymentReviewPage({
 
   if (loading) {
     return (
-      <div className="flex flex-col items-center justify-center h-full py-24 bg-[#f4f6fa]">
-        <Loader size={22} className="text-[#c9692a] animate-spin mb-4" />
+      <div className="flex flex-col items-center justify-center py-24" role="status">
+        <Loader size={22} className="text-primary animate-spin mb-4" />
         <p className="text-gray-500 text-sm">Loading deployment plan…</p>
       </div>
     );
@@ -197,18 +197,18 @@ export default function DeploymentReviewPage({
 
   if (error) {
     return (
-      <div className="p-6 bg-[#f4f6fa] h-full">
-        <button onClick={onBack} className="flex items-center gap-2 text-sm text-[#1e3a7a] hover:underline mb-6 cursor-pointer">
+      <div className="page">
+        <button onClick={onBack} className="btn btn-ghost btn-sm -ml-2 self-start">
           <ArrowLeft size={16} /> Back to deployments
         </button>
-        <div className="flex items-start gap-3 bg-red-50 border border-red-200 rounded-2xl px-5 py-4">
+        <div className="flex items-start gap-3 bg-danger-bg border border-red-200 rounded-[10px] px-5 py-4" role="alert">
           <AlertTriangle size={18} className="text-red-500 flex-shrink-0 mt-0.5" />
           <div>
             <p className="text-red-700 font-semibold text-sm">Could not load deployment</p>
             <p className="text-red-600 text-xs mt-1">{error}</p>
           </div>
-          <button onClick={() => void fetchData()} className="ml-auto text-xs text-red-500 hover:underline cursor-pointer flex items-center gap-1">
-            <RefreshCw size={12} /> Retry
+          <button onClick={() => void fetchData()} className="btn btn-secondary btn-sm ml-auto">
+            <RefreshCw size={14} /> Retry
           </button>
         </div>
       </div>
@@ -220,37 +220,32 @@ export default function DeploymentReviewPage({
   const displayProject = (plan as any).project_name || projectName || deployment.project_id;
 
   return (
-    <div className="p-6 bg-[#f4f6fa] h-full overflow-y-auto space-y-5">
+    <div className="page">
 
-      {/* ── Breadcrumb / back nav ── */}
-      <div className="flex items-center gap-3 flex-wrap">
-        <button
-          onClick={onBack}
-          className="flex items-center gap-2 text-sm text-[#1e3a7a] hover:underline cursor-pointer"
-        >
+      {/* ── Back nav + page title ── */}
+      <div className="flex flex-col gap-3">
+        <button onClick={onBack} className="btn btn-ghost btn-sm -ml-2 self-start">
           <ArrowLeft size={16} /> Deployments
         </button>
-        <ChevronRight size={14} className="text-gray-300" />
-        <span className="text-gray-700 text-sm font-semibold truncate max-w-xs">{displayProject}</span>
-        <span className={`ml-auto px-2.5 py-1 rounded-full text-xs font-semibold border ${statusBadgeClass(status)}`}>
-          {humanStatus(status)}
-        </span>
-      </div>
-
-      {/* ── Page title ── */}
-      <div>
-        <h1 className="text-gray-900 font-bold text-xl">Review deployment</h1>
-        <p className="text-gray-400 text-xs mt-1 font-mono">{deployment.id}</p>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="min-w-0">
+            <h1 className="page-title truncate">Review deployment · {displayProject}</h1>
+            <p className="mt-0.5 truncate font-mono text-xs text-gray-500">{deployment.id}</p>
+          </div>
+          <span className={`badge shrink-0 self-start sm:self-center ${statusBadgeClass(status)}`}>
+            {humanStatus(status)}
+          </span>
+        </div>
       </div>
 
       {/* ── Planning in progress ── */}
       {isPlanning && (
-        <div className="bg-white rounded-2xl border border-amber-200 px-5 py-6 flex items-center gap-4">
+        <div className="bg-white rounded-xl border border-amber-200 px-5 py-6 flex items-center gap-4">
           <div className="w-10 h-10 rounded-xl bg-amber-50 flex items-center justify-center flex-shrink-0">
             <Hourglass size={18} className="text-amber-600" />
           </div>
           <div>
-            <p className="text-gray-800 font-semibold text-sm">Terraform plan in progress</p>
+            <p className="section-title">Terraform plan in progress</p>
             <p className="text-gray-500 text-xs mt-1">
               Running terraform fmt → init → validate → plan. This page refreshes automatically.
             </p>
@@ -261,16 +256,16 @@ export default function DeploymentReviewPage({
 
       {/* ── Account + Region summary ── */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <div className="bg-white rounded-2xl border border-gray-100 px-5 py-4">
-          <p className="text-gray-400 text-[10px] uppercase tracking-widest mb-1">AWS account</p>
+        <div className="card px-5 py-4">
+          <p className="text-gray-500 text-[11px] uppercase tracking-widest mb-1">AWS account</p>
           <p className="text-gray-800 font-mono text-sm font-semibold">{plan.account_id ?? '—'}</p>
         </div>
-        <div className="bg-white rounded-2xl border border-gray-100 px-5 py-4">
-          <p className="text-gray-400 text-[10px] uppercase tracking-widest mb-1">Region</p>
+        <div className="card px-5 py-4">
+          <p className="text-gray-500 text-[11px] uppercase tracking-widest mb-1">Region</p>
           <p className="text-gray-800 text-sm font-semibold">{plan.region ?? deployment.region ?? '—'}</p>
         </div>
-        <div className="bg-white rounded-2xl border border-gray-100 px-5 py-4">
-          <p className="text-gray-400 text-[10px] uppercase tracking-widest mb-1">Environment</p>
+        <div className="card px-5 py-4">
+          <p className="text-gray-500 text-[11px] uppercase tracking-widest mb-1">Environment</p>
           <p className="text-gray-800 text-sm font-semibold capitalize">{(plan as any).environment ?? deployment.environment}</p>
         </div>
       </div>
@@ -285,8 +280,8 @@ export default function DeploymentReviewPage({
 
       {/* ── Destructive warning ── */}
       {hasDestructive && isReady && (
-        <div className="bg-red-50 border-2 border-red-400 rounded-2xl px-5 py-4">
-          <div className="flex items-center gap-2 text-red-800 font-bold text-sm mb-1">
+        <div className="bg-red-50 border-2 border-red-400 rounded-xl px-5 py-4">
+          <div className="flex items-center gap-2 text-red-800 font-semibold text-sm mb-1">
             <AlertTriangle size={18} /> Destructive changes detected
           </div>
           <p className="text-red-700 text-xs">
@@ -299,8 +294,8 @@ export default function DeploymentReviewPage({
 
       {/* ── Plan summary counts ── */}
       {summary && (
-        <div className="bg-white rounded-2xl border border-gray-100 px-5 py-5">
-          <h2 className="text-gray-800 font-semibold text-sm mb-4">Terraform plan summary</h2>
+        <div className="card px-5 py-5">
+          <h2 className="section-title mb-4">Terraform plan summary</h2>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-center">
             {[
               { label: 'Create',  value: summary.create,  bg: 'bg-emerald-50', text: 'text-emerald-800' },
@@ -317,7 +312,7 @@ export default function DeploymentReviewPage({
               },
             ].map(({ label, value, bg, text }) => (
               <div key={label} className={`rounded-xl p-4 ${bg}`}>
-                <p className={`text-2xl font-bold ${text}`}>{value}</p>
+                <p className={`text-2xl font-semibold ${text}`}>{value}</p>
                 <p className={`text-xs mt-0.5 ${text}`}>{label}</p>
               </div>
             ))}
@@ -327,8 +322,8 @@ export default function DeploymentReviewPage({
 
       {/* ── Resource list ── */}
       {summary?.resources && summary.resources.length > 0 && (
-        <div className="bg-white rounded-2xl border border-gray-100 px-5 py-5">
-          <h2 className="text-gray-800 font-semibold text-sm mb-4">Resources</h2>
+        <div className="card px-5 py-5">
+          <h2 className="section-title mb-4">Resources</h2>
           <div className="space-y-2">
             {summary.resources.map((resource, i) => (
               <div
@@ -341,7 +336,7 @@ export default function DeploymentReviewPage({
               >
                 {/* Action badge */}
                 <span
-                  className={`w-[68px] flex-shrink-0 flex items-center justify-center gap-1 px-2 py-1 rounded-lg text-[10px] font-bold uppercase border ${actionColor(resource.action)}`}
+                  className={`w-[68px] flex-shrink-0 flex items-center justify-center gap-1 px-2 py-1 rounded-lg text-[10px] font-semibold uppercase border ${actionColor(resource.action)}`}
                 >
                   <span className="text-sm leading-none">{actionSymbol(resource.action)}</span>
                   {resource.action}
@@ -357,14 +352,14 @@ export default function DeploymentReviewPage({
             ))}
           </div>
           {summary.resources.length === 0 && (
-            <p className="text-gray-400 text-xs">No resource changes in this plan.</p>
+            <p className="text-gray-500 text-xs">No resource changes in this plan.</p>
           )}
         </div>
       )}
 
       {/* ── Raw Terraform plan (collapsible) ── */}
       {plan.terraform_plan && (
-        <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
+        <div className="card overflow-hidden">
           <button
             onClick={() => setPlanOpen((v) => !v)}
             className="w-full flex items-center justify-between px-5 py-4 text-left hover:bg-gray-50 transition-colors cursor-pointer"
@@ -388,7 +383,7 @@ export default function DeploymentReviewPage({
 
       {/* ── Error detail ── */}
       {isFailed && plan.error_message && (
-        <div className="bg-red-50 border border-red-200 rounded-2xl px-5 py-4">
+        <div className="bg-red-50 border border-red-200 rounded-xl px-5 py-4">
           <div className="flex items-center gap-2 text-red-700 font-semibold text-sm mb-2">
             <XCircle size={16} /> Deployment planning failed
           </div>
@@ -400,12 +395,12 @@ export default function DeploymentReviewPage({
 
       {/* ── APPROVED state ── */}
       {isApproved && (
-        <div className="bg-emerald-50 border border-emerald-200 rounded-2xl px-5 py-6 flex items-start gap-4">
+        <div className="bg-emerald-50 border border-emerald-200 rounded-xl px-5 py-6 flex items-start gap-4">
           <div className="w-10 h-10 rounded-xl bg-emerald-100 flex items-center justify-center flex-shrink-0">
             <CheckCircle2 size={20} className="text-emerald-600" />
           </div>
           <div>
-            <p className="text-emerald-800 font-bold text-sm">Deployment approved successfully</p>
+            <p className="text-emerald-800 font-semibold text-sm">Deployment approved successfully</p>
             <p className="text-emerald-700 text-xs mt-1">
               Your approval has been recorded. The plan is ready for the apply phase.{' '}
               <strong>No AWS infrastructure has been created yet.</strong>
@@ -416,12 +411,12 @@ export default function DeploymentReviewPage({
 
       {/* ── REJECTED state ── */}
       {isRejected && (
-        <div className="bg-gray-50 border border-gray-200 rounded-2xl px-5 py-6 flex items-start gap-4">
+        <div className="bg-gray-50 border border-gray-200 rounded-xl px-5 py-6 flex items-start gap-4">
           <div className="w-10 h-10 rounded-xl bg-gray-100 flex items-center justify-center flex-shrink-0">
             <XCircle size={20} className="text-gray-500" />
           </div>
           <div>
-            <p className="text-gray-700 font-bold text-sm">Deployment plan rejected</p>
+            <p className="text-gray-700 font-semibold text-sm">Deployment plan rejected</p>
             <p className="text-gray-500 text-xs mt-1">
               This plan was rejected. Create a new deployment plan when you are ready to proceed.
             </p>
@@ -431,11 +426,11 @@ export default function DeploymentReviewPage({
 
       {/* ── Approval gate (only when plan is AWAITING_APPROVAL or PLAN_READY) ── */}
       {isReady && (
-        <div className="bg-white rounded-2xl border border-gray-100 px-5 py-5 space-y-4">
+        <div className="card px-5 py-5 space-y-4">
           {/* Safety note */}
-          <div className="flex items-start gap-3 bg-[#edf3fb] border border-[#a8c1ea] rounded-xl px-4 py-3">
-            <ShieldCheck size={16} className="text-[#1e3a7a] flex-shrink-0 mt-0.5" />
-            <p className="text-[#1e3a7a] text-xs">
+          <div className="flex items-start gap-3 bg-primary-50 border border-primary-200 rounded-xl px-4 py-3">
+            <ShieldCheck size={16} className="text-primary flex-shrink-0 mt-0.5" />
+            <p className="text-primary text-xs">
               Approving this plan records your explicit consent. The infrastructure changes shown
               above will be applied to your AWS account in the next phase.{' '}
               <strong>No changes are made by clicking Approve — this only records your decision.</strong>
@@ -451,12 +446,12 @@ export default function DeploymentReviewPage({
           )}
 
           {/* Acknowledgement checkbox */}
-          <label className="flex items-start gap-3 p-4 rounded-xl border border-gray-200 hover:border-[#1e3a7a] transition-colors cursor-pointer group">
+          <label className="flex items-start gap-3 p-4 rounded-xl border border-gray-200 hover:border-primary transition-colors cursor-pointer group">
             <input
               type="checkbox"
               checked={understood}
               onChange={(e) => setUnderstood(e.target.checked)}
-              className="mt-0.5 w-4 h-4 accent-[#1e3a7a] cursor-pointer flex-shrink-0"
+              className="mt-0.5 w-4 h-4 accent-primary cursor-pointer flex-shrink-0"
               aria-label="I understand these changes will be applied to my AWS account"
             />
             <span className="text-gray-700 text-sm group-hover:text-gray-900">
@@ -502,7 +497,7 @@ export default function DeploymentReviewPage({
 
           {/* Disabled-button explanation */}
           {!understood && (
-            <div className="flex items-center gap-2 text-gray-400 text-xs">
+            <div className="flex items-center gap-2 text-gray-500 text-xs">
               <Info size={12} />
               Check the box above to enable the Approve button.
             </div>
@@ -514,7 +509,7 @@ export default function DeploymentReviewPage({
       <div className="pb-4">
         <button
           onClick={onBack}
-          className="flex items-center gap-2 text-sm text-[#1e3a7a] hover:underline cursor-pointer"
+          className="flex items-center gap-2 text-sm text-primary hover:underline cursor-pointer"
         >
           <ArrowLeft size={16} /> Back to all deployments
         </button>

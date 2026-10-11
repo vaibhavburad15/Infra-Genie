@@ -4,6 +4,7 @@ cloud_routes.py — FastAPI router for AWS cloud account connectivity.
 Endpoints
 ─────────
   POST   /api/cloud/aws/connect                 Start connection (generate External ID + CFN template)
+  GET    /api/cloud/aws/{connection_id}/setup   Resume setup for a PENDING/FAILED connection
   POST   /api/cloud/aws/{connection_id}/verify  Verify via STS AssumeRole
   GET    /api/cloud/aws                         List user's connected AWS accounts
   DELETE /api/cloud/aws/{connection_id}         Disconnect (soft-delete)
@@ -27,6 +28,7 @@ import uuid as _uuid
 from datetime import datetime, timedelta
 from typing import Optional
 
+import boto3
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 from fastapi.security import OAuth2PasswordBearer
@@ -77,6 +79,44 @@ async def _require_user(
     return u
 
 
+# ── Backend AWS configuration pre-flight ──────────────────────────────────────
+
+# Default in config.py, and AWS's documentation example account — never valid.
+_PLACEHOLDER_ACCOUNT_IDS = {"123456789012", ""}
+
+
+def _require_backend_aws_config() -> None:
+    """
+    Refuse to hand out a CloudFormation template that cannot work.
+
+    The template's trust policy names AWS_INFRAGENIE_ACCOUNT_ID as the principal;
+    if that is the placeholder, IAM rejects the role ("Invalid principal in
+    policy") and the customer's stack fails with CREATE_FAILED. Without backend
+    AWS credentials, verification (STS AssumeRole) can never succeed either.
+    """
+    account_id = (settings.aws_infragenie_account_id or "").strip()
+    if account_id in _PLACEHOLDER_ACCOUNT_IDS or not (account_id.isdigit() and len(account_id) == 12):
+        logger.error("[CONFIG] AWS_INFRAGENIE_ACCOUNT_ID is not configured (value=%r)", account_id)
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "AWS connections are not configured on this Infra Genie server: "
+                "AWS_INFRAGENIE_ACCOUNT_ID is missing or still the placeholder. "
+                "An administrator must set it to the 12-digit AWS account the backend runs in."
+            ),
+        )
+    if boto3.Session().get_credentials() is None:
+        logger.error("[CONFIG] No AWS credentials available to the Infra Genie backend")
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "AWS connections are not configured on this Infra Genie server: "
+                "the backend has no AWS credentials. An administrator must set "
+                "AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY or attach an instance role."
+            ),
+        )
+
+
 # ── POST /api/cloud/aws/connect ───────────────────────────────────────────────
 
 @router.post(
@@ -107,6 +147,8 @@ async def connect_aws_account(
       • Enforces the External ID as a condition (confused-deputy protection).
       • Attaches AdministratorAccess — TESTING ONLY, see template comments.
     """
+    # Before creating a record, so a misconfigured server leaves no orphaned PENDING rows.
+    _require_backend_aws_config()
     try:
         record = await aws_connection_service.create_connection(
             db=db,
@@ -136,6 +178,67 @@ async def connect_aws_account(
         external_id=record.external_id,    # needed by the user to embed in CFN
         role_name=settings.aws_role_name,
         status=CloudAccountStatus.pending,
+        infragenie_account_id=settings.aws_infragenie_account_id,
+        cloudformation_template=cfn_template,
+    )
+
+
+# ── GET /api/cloud/aws/{connection_id}/setup ──────────────────────────────────
+
+@router.get(
+    "/aws/{connection_id}/setup",
+    response_model=CloudAccountConnectResponse,
+    summary="Resume an unfinished AWS account connection",
+    description=(
+        "Returns the setup details (External ID + CloudFormation template) for an "
+        "existing PENDING or FAILED connection so the user can continue setup "
+        "without creating a new record or rotating the External ID."
+    ),
+)
+async def get_aws_connection_setup(
+    connection_id: _uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(_require_user),
+):
+    """
+    Read-only. Reuses the External ID stored on the record, so a CloudFormation
+    stack the user may already have deployed keeps working.
+    """
+    _require_backend_aws_config()
+    try:
+        record = await aws_connection_service.get_connection(
+            db=db,
+            connection_id=connection_id,
+            user_id=current_user.id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+    if record.status not in (CloudAccountStatus.pending, CloudAccountStatus.failed):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Connection is {getattr(record.status, 'value', record.status)}; setup can only be resumed for PENDING or FAILED connections.",
+        )
+
+    cfn_template = aws_connection_service.generate_cloudformation_template(
+        infragenie_account_id=settings.aws_infragenie_account_id,
+        external_id=record.external_id,
+        role_name=settings.aws_role_name,
+    )
+
+    logger.info(
+        "[AUDIT] cfn_template.resumed | user=%s | account=%s | connection=%s",
+        current_user.id, record.account_id, record.id,
+    )
+
+    return CloudAccountConnectResponse(
+        connection_id=record.id,
+        provider="AWS",
+        account_id=record.account_id,
+        region=record.region,
+        external_id=record.external_id,
+        role_name=settings.aws_role_name,
+        status=record.status,
         infragenie_account_id=settings.aws_infragenie_account_id,
         cloudformation_template=cfn_template,
     )

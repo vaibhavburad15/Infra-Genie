@@ -8,6 +8,9 @@ This file contains ONLY:
   - Genuinely safe, non-sensitive generic defaults
   - The settings singleton
 """
+import os
+
+from pydantic import SecretStr
 from pydantic_settings import BaseSettings
 from pathlib import Path
 
@@ -79,11 +82,13 @@ class Settings(BaseSettings):
 
     # Standard boto3 credential env vars — set these for local dev / CI.
     # In production, prefer an EC2 instance role or ECS task role instead.
-    # boto3 reads these automatically; we don't need to reference them in code.
     # AWS_ACCESS_KEY_ID     — Infra Genie backend's own AWS access key
     # AWS_SECRET_ACCESS_KEY — Infra Genie backend's own AWS secret key
-    # (Not declared as Settings fields — boto3 picks them up from the environment
-    #  directly, so we never accidentally log or serialize them via Pydantic.)
+    # Declared so they may live in .env (Settings forbids unknown keys). SecretStr
+    # keeps them masked in repr/logs/serialization. boto3 only reads os.environ,
+    # so _export_aws_credentials() below copies them there at startup.
+    aws_access_key_id: SecretStr = SecretStr("")
+    aws_secret_access_key: SecretStr = SecretStr("")
 
     # ── App ───────────────────────────────────────────────────────────────────
     app_env: str = "development"
@@ -119,3 +124,22 @@ class Settings(BaseSettings):
 
 
 settings = Settings()  # pyright: ignore[reportCallIssue]
+
+
+def _export_aws_credentials(s: Settings) -> None:
+    """
+    Make .env AWS credentials visible to boto3, which only reads the process
+    environment. Real environment variables take precedence, and unfilled
+    template placeholders such as "<YOUR_...>" are ignored so the backend
+    correctly reports that no credentials are configured.
+    """
+    for env_name, secret in (
+        ("AWS_ACCESS_KEY_ID", s.aws_access_key_id),
+        ("AWS_SECRET_ACCESS_KEY", s.aws_secret_access_key),
+    ):
+        value = secret.get_secret_value().strip()
+        if value and not value.startswith("<"):
+            os.environ.setdefault(env_name, value)
+
+
+_export_aws_credentials(settings)

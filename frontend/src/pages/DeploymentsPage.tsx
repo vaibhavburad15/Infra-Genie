@@ -1,13 +1,14 @@
 import { useEffect, useState } from 'react';
 import {
   Rocket, CheckCircle2, XCircle, Clock, Loader, ChevronRight,
-  AlertTriangle, RefreshCw, Users, Hourglass, ShieldCheck, Eye,
+  AlertTriangle, RefreshCw, Users, Hourglass, ShieldCheck, Eye, Plus,
 } from 'lucide-react';
 import {
   listProjects, listDeployments, listAWSConnections, createDeployment,
   timeAgo, parseDate, ForbiddenError,
   type Project, type CloudAccountOut, type Deployment,
 } from '@/api';
+import { PageHeader, StatCard, EmptyState, LoadingState } from '@/components/ui';
 
 // ── Props ─────────────────────────────────────────────────────────────────────
 
@@ -21,8 +22,8 @@ interface DeploymentsPageProps {
 
 const statusBadge: Record<string, string> = {
   planning:          'bg-amber-50 text-amber-700 border-amber-200',
-  plan_ready:        'bg-[#edf3fb] text-[#1e3a7a] border-[#a8c1ea]',
-  awaiting_approval: 'bg-[#edf3fb] text-[#1e3a7a] border-[#a8c1ea]',
+  plan_ready:        'bg-primary-50 text-primary border-primary-200',
+  awaiting_approval: 'bg-primary-50 text-primary border-primary-200',
   approved:          'bg-emerald-50 text-emerald-700 border-emerald-200',
   applying:          'bg-amber-50 text-amber-700 border-amber-200',
   deployed:          'bg-emerald-50 text-emerald-700 border-emerald-200',
@@ -48,8 +49,8 @@ const statusLabel: Record<string, string> = {
 };
 
 const envColors: Record<string, string> = {
-  production:  'bg-[#fdf3eb] text-[#c9692a] border-[#f0bc98]',
-  staging:     'bg-[#edf3fb] text-[#1e3a7a] border-[#a8c1ea]',
+  production:  'bg-accent-50 text-accent-700 border-accent-200',
+  staging:     'bg-primary-50 text-primary border-primary-200',
   development: 'bg-gray-100 text-gray-500 border-gray-200',
 };
 
@@ -165,70 +166,41 @@ export default function DeploymentsPage({ onReviewDeployment }: DeploymentsPageP
   // ── Render ──────────────────────────────────────────────────────────────────
 
   return (
-    <div className="p-6 space-y-4 overflow-y-auto h-full bg-[#f4f6fa]">
+    <div className="page">
+
+      <PageHeader
+        title="Deployments"
+        description="Terraform changes are reviewed before an approved plan can be applied."
+        icon={Rocket}
+        actions={
+          <>
+            <button onClick={() => void load()} disabled={loading} className="btn btn-secondary btn-icon" title="Refresh" aria-label="Refresh">
+              <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
+            </button>
+            <button onClick={openCreate} className="btn btn-primary">
+              <Plus size={16} /> Create plan
+            </button>
+          </>
+        }
+      />
 
       {/* Stats row */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        {[
-          { label: 'Total plans',    value: deployments.length,                       icon: Rocket,       color: '#1e3a7a', bg: '#edf3fb' },
-          { label: 'Awaiting review', value: pendingApprovalCount,                    icon: Clock,        color: '#1e3a7a', bg: '#edf3fb' },
-          { label: 'Applying',       value: applyingCount,                            icon: Hourglass,    color: '#c9692a', bg: '#fdf3eb' },
-          { label: 'Deployed / failed', value: `${deployedCount} / ${failedCount}`,  icon: CheckCircle2, color: '#15803d', bg: '#ecfdf5' },
-        ].map((s) => {
-          const Icon = s.icon;
-          return (
-            <div key={s.label} className="bg-white rounded-2xl p-4 border border-gray-100 flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ backgroundColor: s.bg }}>
-                <Icon size={18} style={{ color: s.color }} />
-              </div>
-              <div>
-                <p className="text-gray-800 text-xl font-bold">{s.value}</p>
-                <p className="text-gray-400 text-xs">{s.label}</p>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-
-      {/* Toolbar */}
-      <div className="flex items-center justify-between gap-3 flex-wrap">
-        <div>
-          <h3 className="text-gray-800 font-semibold text-sm">Deployment plans</h3>
-          <p className="text-gray-400 text-xs mt-1">
-            Terraform changes are reviewed before an approved plan can be applied.
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => void load()}
-            className="p-2 rounded-lg bg-white border border-gray-200 text-gray-500 hover:text-[#1e3a7a] cursor-pointer"
-            title="Refresh"
-          >
-            <RefreshCw size={14} />
-          </button>
-          <button
-            onClick={openCreate}
-            className="flex items-center gap-2 px-3 py-2 rounded-lg bg-[#1e3a7a] text-white text-xs font-semibold hover:bg-[#162d5f] cursor-pointer"
-          >
-            <Rocket size={14} /> Create plan
-          </button>
-        </div>
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4 lg:gap-4">
+        <StatCard label="Total plans"       value={deployments.length}                     icon={Rocket}       tone="primary" />
+        <StatCard label="Awaiting review"   value={pendingApprovalCount}                   icon={Clock}        tone="info" />
+        <StatCard label="Applying"          value={applyingCount}                          icon={Hourglass}    tone="accent" />
+        <StatCard label="Deployed / failed" value={`${deployedCount} / ${failedCount}`}    icon={CheckCircle2} tone="success" />
       </div>
 
       {/* Loading */}
-      {loading && (
-        <div className="flex items-center justify-center py-16">
-          <Loader size={20} className="text-[#c9692a] animate-spin mr-2" />
-          <span className="text-gray-400 text-sm">Loading deployments…</span>
-        </div>
-      )}
+      {loading && <div className="card"><LoadingState label="Loading deployments…" /></div>}
 
       {/* Error */}
       {error && !loading && (
         error === '__no_org__' ? (
-          <div className="flex flex-col items-center justify-center py-20 text-center bg-white rounded-2xl">
-            <Users size={28} className="text-[#1e3a7a] mb-4" />
-            <p className="text-gray-800 font-semibold text-sm">No organization yet</p>
+          <div className="flex flex-col items-center justify-center py-20 text-center bg-white rounded-xl">
+            <Users size={28} className="text-primary mb-4" />
+            <p className="section-title">No organization yet</p>
             <p className="text-gray-500 text-xs mt-2 max-w-xs">
               Join an organization or create one in Settings before planning deployments.
             </p>
@@ -244,12 +216,12 @@ export default function DeploymentsPage({ onReviewDeployment }: DeploymentsPageP
 
       {/* Empty */}
       {!loading && !error && deployments.length === 0 && (
-        <div className="bg-white rounded-2xl border border-gray-100 flex flex-col items-center justify-center py-16 text-center">
-          <div className="w-14 h-14 rounded-2xl bg-[#edf3fb] flex items-center justify-center mb-4">
-            <Rocket size={24} className="text-[#1e3a7a]" />
+        <div className="card flex flex-col items-center justify-center py-16 text-center">
+          <div className="w-14 h-14 rounded-xl bg-primary-50 flex items-center justify-center mb-4">
+            <Rocket size={24} className="text-primary" />
           </div>
-          <p className="text-gray-800 font-semibold text-sm">No deployment plans yet</p>
-          <p className="text-gray-400 text-xs mt-1 max-w-md">
+          <p className="section-title">No deployment plans yet</p>
+          <p className="text-gray-500 text-xs mt-1 max-w-md">
             Analyze a project, connect an AWS account, and run discovery before creating the first plan.
           </p>
         </div>
@@ -262,18 +234,18 @@ export default function DeploymentsPage({ onReviewDeployment }: DeploymentsPageP
         const canReview = ['plan_ready', 'awaiting_approval'].includes(dep.status) && Boolean(summary);
 
         return (
-          <div key={dep.id} className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
+          <div key={dep.id} className="card overflow-hidden">
             {/* Card header */}
             <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100 flex-wrap gap-3">
               <div className="flex items-center gap-3">
-                <div className="w-9 h-9 rounded-xl bg-[#edf3fb] flex items-center justify-center">
-                  <Rocket size={16} className="text-[#1e3a7a]" />
+                <div className="w-9 h-9 rounded-xl bg-primary-50 flex items-center justify-center">
+                  <Rocket size={16} className="text-primary" />
                 </div>
                 <div>
-                  <h3 className="text-gray-800 text-sm font-bold">
+                  <h3 className="section-title">
                     {projectMap[dep.project_id] || dep.project_id}
                   </h3>
-                  <p className="text-gray-400 text-xs font-mono">{dep.id.slice(0, 8)}…</p>
+                  <p className="text-gray-500 text-xs font-mono">{dep.id.slice(0, 8)}…</p>
                 </div>
               </div>
               <div className="flex items-center gap-2 flex-wrap">
@@ -283,7 +255,7 @@ export default function DeploymentsPage({ onReviewDeployment }: DeploymentsPageP
                 <span className={`px-2 py-0.5 rounded-full text-xs font-medium border ${statusBadge[dep.status] ?? statusBadge.pending}`}>
                   {statusLabel[dep.status] ?? dep.status.replace(/_/g, ' ')}
                 </span>
-                <span className="text-gray-400 text-xs flex items-center gap-1">
+                <span className="text-gray-500 text-xs flex items-center gap-1">
                   <Clock size={11} />{timeAgo(dep.created_at)}
                 </span>
               </div>
@@ -293,19 +265,19 @@ export default function DeploymentsPage({ onReviewDeployment }: DeploymentsPageP
             <div className="px-5 py-4">
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-xs">
                 <div>
-                  <p className="text-gray-300 text-[10px] uppercase tracking-wider mb-0.5">AWS region</p>
+                  <p className="text-gray-500 text-[11px] uppercase tracking-wider mb-0.5">AWS region</p>
                   <p className="text-gray-600">{dep.region || '—'}</p>
                 </div>
                 <div>
-                  <p className="text-gray-300 text-[10px] uppercase tracking-wider mb-0.5">Started</p>
+                  <p className="text-gray-500 text-[11px] uppercase tracking-wider mb-0.5">Started</p>
                   <p className="text-gray-600">{timeAgo(dep.started_at)}</p>
                 </div>
                 <div>
-                  <p className="text-gray-300 text-[10px] uppercase tracking-wider mb-0.5">Plan created</p>
+                  <p className="text-gray-500 text-[11px] uppercase tracking-wider mb-0.5">Plan created</p>
                   <p className="text-gray-600">{timeAgo(dep.plan_created_at ?? dep.completed_at)}</p>
                 </div>
                 <div>
-                  <p className="text-gray-300 text-[10px] uppercase tracking-wider mb-0.5">Approved</p>
+                  <p className="text-gray-500 text-[11px] uppercase tracking-wider mb-0.5">Approved</p>
                   <p className="text-gray-600">{timeAgo(dep.approved_at)}</p>
                 </div>
               </div>
@@ -351,15 +323,15 @@ export default function DeploymentsPage({ onReviewDeployment }: DeploymentsPageP
               {/* Review CTA — navigates to the dedicated review page */}
               {canReview && (
                 <div className="mt-4 flex items-center gap-3 flex-wrap">
-                  <div className="flex-1 min-w-[220px] px-3 py-2 rounded-xl bg-[#edf3fb] border border-[#a8c1ea] flex items-center gap-2">
-                    <Clock size={13} className="text-[#1e3a7a]" />
-                    <p className="text-[#1e3a7a] text-xs font-medium">
+                  <div className="flex-1 min-w-[220px] px-3 py-2 rounded-xl bg-primary-50 border border-primary-200 flex items-center gap-2">
+                    <Clock size={13} className="text-primary" />
+                    <p className="text-primary text-xs font-medium">
                       Review the Terraform changes before approving.
                     </p>
                   </div>
                   <button
                     onClick={() => handleReview(dep)}
-                    className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-[#1e3a7a] text-white text-xs font-semibold hover:bg-[#162d5f] cursor-pointer"
+                    className="btn btn-primary btn-sm"
                     aria-label={`Review plan for ${projectMap[dep.project_id] || 'deployment'}`}
                   >
                     <Eye size={13} /> Review plan
@@ -419,11 +391,11 @@ export default function DeploymentsPage({ onReviewDeployment }: DeploymentsPageP
           onClick={() => !creating && setShowCreate(false)}
         >
           <div
-            className="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6 space-y-5"
+            className="bg-white rounded-xl shadow-2xl w-full max-w-lg p-6 space-y-5"
             onClick={(e) => e.stopPropagation()}
           >
             <div>
-              <h2 className="text-gray-900 font-bold text-lg">Create deployment plan</h2>
+              <h2 className="text-gray-900 font-semibold text-lg">Create deployment plan</h2>
               <p className="text-gray-500 text-xs mt-1">
                 Select an analyzed project and a discovered AWS account. This runs Terraform plan only — nothing is deployed.
               </p>
@@ -481,7 +453,7 @@ export default function DeploymentsPage({ onReviewDeployment }: DeploymentsPageP
               <button
                 disabled={creating || !projectId || !accountId}
                 onClick={() => void startPlanning()}
-                className="px-4 py-2 rounded-lg bg-[#1e3a7a] text-white text-xs font-semibold disabled:opacity-50 flex items-center gap-2 cursor-pointer"
+                className="btn btn-primary btn-sm"
               >
                 {creating && <Loader size={13} className="animate-spin" />}
                 {creating ? 'Starting…' : 'Generate plan'}

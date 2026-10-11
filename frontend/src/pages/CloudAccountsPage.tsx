@@ -6,17 +6,18 @@
  *  • AWS Discovery panel — trigger scan, view structured inventory results
  *
  * Status badges:
- *   🟡 PENDING       — External ID generated, CFN not yet deployed
- *   🔵 VERIFYING     — STS AssumeRole in progress
- *   🟢 CONNECTED     — Verified and ready
- *   🔴 FAILED        — Verification failed (error shown)
- *   ⚫ DISCONNECTED  — Manually disconnected
+ *   PENDING       — External ID generated, CFN not yet deployed
+ *   VERIFYING     — STS AssumeRole in progress
+ *   CONNECTED     — Verified and ready
+ *   FAILED        — Verification failed (error shown)
+ *   DISCONNECTED  — Manually disconnected
  */
 
 import { useCallback, useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Cloud,
-  PlusCircle,
+  Plus,
   RefreshCw,
   Trash2,
   CheckCircle2,
@@ -32,12 +33,16 @@ import {
   Server,
   Database,
   Shield,
+  ShieldCheck,
   Box,
   HardDrive,
   Network,
   Cpu,
   Archive,
   Globe,
+  KeyRound,
+  FileCode2,
+  Radar,
 } from 'lucide-react';
 import {
   listAWSConnections,
@@ -45,58 +50,53 @@ import {
   disconnectAWSAccount,
   runAWSDiscovery,
   getAWSDiscoveryResult,
+  getAWSConnectionSetup,
+  ApiError,
+  type CloudAccountConnectResponse,
   type CloudAccountOut,
   type CloudAccountStatus,
   type DiscoveryResult,
-  type DiscoverySummary,
 } from '@/api';
 import AWSConnectWizard from '@/components/AWSConnectWizard';
+import { PageHeader, StatCard, LoadingState } from '@/components/ui';
 
 // ── Status helpers ────────────────────────────────────────────────────────────
 
 const STATUS_CONFIG: Record<
   CloudAccountStatus,
-  { label: string; dot: string; badge: string; icon: React.ReactNode }
+  { label: string; badge: string; icon: React.ReactNode }
 > = {
   PENDING: {
-    label: 'Setup required',
-    dot: 'bg-yellow-400',
-    badge: 'bg-yellow-50 text-yellow-700 border-yellow-200',
-    icon: <Clock size={13} />,
+    label: 'Pending setup',
+    badge: 'badge-warning',
+    icon: <Clock size={12} />,
   },
   VERIFYING: {
     label: 'Verifying…',
-    dot: 'bg-blue-400 animate-pulse',
-    badge: 'bg-blue-50 text-blue-700 border-blue-200',
-    icon: <Loader2 size={13} className="animate-spin" />,
+    badge: 'badge-info',
+    icon: <Loader2 size={12} className="animate-spin" />,
   },
   CONNECTED: {
     label: 'Connected',
-    dot: 'bg-green-500',
-    badge: 'bg-green-50 text-green-700 border-green-200',
-    icon: <CheckCircle2 size={13} />,
+    badge: 'badge-success',
+    icon: <CheckCircle2 size={12} />,
   },
   FAILED: {
-    label: 'Connection failed',
-    dot: 'bg-red-500',
-    badge: 'bg-red-50 text-red-700 border-red-200',
-    icon: <XCircle size={13} />,
+    label: 'Failed',
+    badge: 'badge-danger',
+    icon: <XCircle size={12} />,
   },
   DISCONNECTED: {
     label: 'Disconnected',
-    dot: 'bg-slate-400',
-    badge: 'bg-slate-50 text-slate-600 border-slate-200',
-    icon: <WifiOff size={13} />,
+    badge: 'badge-neutral',
+    icon: <WifiOff size={12} />,
   },
 };
 
 function StatusBadge({ status }: { status: CloudAccountStatus }) {
   const cfg = STATUS_CONFIG[status] ?? STATUS_CONFIG['PENDING'];
   return (
-    <span
-      className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold border ${cfg.badge}`}
-    >
-      <span className={`w-2 h-2 rounded-full ${cfg.dot}`} />
+    <span className={`badge ${cfg.badge}`}>
       {cfg.icon}
       {cfg.label}
     </span>
@@ -119,20 +119,19 @@ interface SummaryTileProps {
   label: string;
   count: number;
   icon: React.ReactNode;
-  color: string;
   sub?: string;
 }
 
-function SummaryTile({ label, count, icon, color, sub }: SummaryTileProps) {
+function SummaryTile({ label, count, icon, sub }: SummaryTileProps) {
   return (
-    <div className="bg-white rounded-xl border border-slate-100 p-4 flex items-start gap-3">
-      <div className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${color}`}>
+    <div className="card flex items-center gap-3 px-3.5 py-3">
+      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary-50 text-primary">
         {icon}
       </div>
       <div className="min-w-0">
-        <p className="text-2xl font-bold text-slate-800 leading-none">{count}</p>
-        <p className="text-xs text-slate-500 mt-0.5">{label}</p>
-        {sub && <p className="text-xs text-slate-400 mt-0.5 truncate">{sub}</p>}
+        <p className="text-xl font-semibold leading-6 text-gray-900 tabular-nums">{count}</p>
+        <p className="text-xs text-gray-500">{label}</p>
+        {sub && <p className="mt-0.5 truncate text-xs text-gray-400">{sub}</p>}
       </div>
     </div>
   );
@@ -152,21 +151,20 @@ function ResourceSection({ title, icon, count, children, defaultOpen = false }: 
   const [open, setOpen] = useState(defaultOpen);
   if (count === 0) return null;
   return (
-    <div className="bg-white rounded-xl border border-slate-100 overflow-hidden">
+    <div className="card overflow-hidden">
       <button
-        className="w-full flex items-center justify-between px-4 py-3 hover:bg-slate-50 transition-colors"
+        className="flex w-full items-center justify-between px-4 py-2.5 transition-colors hover:bg-gray-50"
         onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
       >
         <div className="flex items-center gap-2">
-          <span className="text-slate-500">{icon}</span>
-          <span className="font-semibold text-slate-700 text-sm">{title}</span>
-          <span className="text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full font-medium">
-            {count}
-          </span>
+          <span className="text-gray-500">{icon}</span>
+          <span className="text-sm font-medium text-gray-800">{title}</span>
+          <span className="badge badge-neutral">{count}</span>
         </div>
-        {open ? <ChevronDown size={15} className="text-slate-400" /> : <ChevronRight size={15} className="text-slate-400" />}
+        {open ? <ChevronDown size={16} className="text-gray-400" /> : <ChevronRight size={16} className="text-gray-400" />}
       </button>
-      {open && <div className="border-t border-slate-100 px-4 py-3">{children}</div>}
+      {open && <div className="border-t border-gray-200">{children}</div>}
     </div>
   );
 }
@@ -178,12 +176,12 @@ function ResourceTable({ columns, rows }: {
   rows: (string | number | boolean | null | undefined)[][];
 }) {
   return (
-    <div className="overflow-x-auto -mx-4 px-4">
-      <table className="w-full text-xs border-collapse">
+    <div className="overflow-x-auto">
+      <table className="w-full border-collapse text-xs">
         <thead>
-          <tr className="bg-slate-50">
+          <tr className="bg-gray-50">
             {columns.map((col) => (
-              <th key={col} className="text-left px-3 py-2 text-slate-500 font-semibold border-b border-slate-100 whitespace-nowrap">
+              <th key={col} scope="col" className="whitespace-nowrap border-b border-gray-200 px-4 py-2 text-left font-medium text-gray-500">
                 {col}
               </th>
             ))}
@@ -191,9 +189,9 @@ function ResourceTable({ columns, rows }: {
         </thead>
         <tbody>
           {rows.map((row, i) => (
-            <tr key={i} className="border-b border-slate-50 hover:bg-slate-50/50 transition-colors">
+            <tr key={i} className="border-b border-gray-100 transition-colors last:border-0 hover:bg-gray-50">
               {row.map((cell, j) => (
-                <td key={j} className="px-3 py-2 text-slate-700 font-mono whitespace-nowrap max-w-[200px] truncate" title={String(cell ?? '—')}>
+                <td key={j} className="max-w-[240px] truncate whitespace-nowrap px-4 py-2 font-mono text-[11.5px] text-gray-700" title={String(cell ?? '—')}>
                   {cell === true ? '✓' : cell === false ? '✗' : cell ?? '—'}
                 </td>
               ))}
@@ -211,29 +209,13 @@ function DiscoveryResultsPanel({ result }: { result: DiscoveryResult }) {
   const s = result.summary;
 
   const summaryTiles: SummaryTileProps[] = [
-    {
-      label: 'VPCs',
-      count: s.vpc_count,
-      icon: <Network size={16} className="text-blue-600" />,
-      color: 'bg-blue-50',
-    },
-    {
-      label: 'Subnets',
-      count: s.subnet_count,
-      icon: <Globe size={16} className="text-cyan-600" />,
-      color: 'bg-cyan-50',
-    },
-    {
-      label: 'Security Groups',
-      count: s.security_group_count,
-      icon: <Shield size={16} className="text-violet-600" />,
-      color: 'bg-violet-50',
-    },
+    { label: 'VPCs', count: s.vpc_count, icon: <Network size={16} /> },
+    { label: 'Subnets', count: s.subnet_count, icon: <Globe size={16} /> },
+    { label: 'Security Groups', count: s.security_group_count, icon: <Shield size={16} /> },
     {
       label: 'EC2 Instances',
       count: s.ec2_instance_count,
-      icon: <Server size={16} className="text-emerald-600" />,
-      color: 'bg-emerald-50',
+      icon: <Server size={16} />,
       sub: Object.entries(s.ec2_by_state || {})
         .map(([k, v]) => `${v} ${k}`)
         .join(' · ') || undefined,
@@ -241,71 +223,42 @@ function DiscoveryResultsPanel({ result }: { result: DiscoveryResult }) {
     {
       label: 'Load Balancers',
       count: s.load_balancer_count,
-      icon: <Cpu size={16} className="text-orange-600" />,
-      color: 'bg-orange-50',
+      icon: <Cpu size={16} />,
       sub: Object.entries(s.lb_by_type || {})
         .map(([k, v]) => `${v} ${k}`)
         .join(' · ') || undefined,
     },
-    {
-      label: 'EKS Clusters',
-      count: s.eks_cluster_count,
-      icon: <Box size={16} className="text-indigo-600" />,
-      color: 'bg-indigo-50',
-    },
+    { label: 'EKS Clusters', count: s.eks_cluster_count, icon: <Box size={16} /> },
     {
       label: 'RDS Instances',
       count: s.rds_instance_count,
-      icon: <Database size={16} className="text-rose-600" />,
-      color: 'bg-rose-50',
+      icon: <Database size={16} />,
       sub: Object.entries(s.rds_by_engine || {})
         .map(([k, v]) => `${v} ${k}`)
         .join(' · ') || undefined,
     },
-    {
-      label: 'S3 Buckets',
-      count: s.s3_bucket_count,
-      icon: <Archive size={16} className="text-amber-600" />,
-      color: 'bg-amber-50',
-    },
-    {
-      label: 'NAT Gateways',
-      count: s.nat_gateway_count,
-      icon: <HardDrive size={16} className="text-teal-600" />,
-      color: 'bg-teal-50',
-    },
-    {
-      label: 'ECR Repos',
-      count: s.ecr_repo_count,
-      icon: <Box size={16} className="text-pink-600" />,
-      color: 'bg-pink-50',
-    },
-    {
-      label: 'IAM Roles',
-      count: s.iam_role_count,
-      icon: <Shield size={16} className="text-slate-600" />,
-      color: 'bg-slate-100',
-    },
+    { label: 'S3 Buckets', count: s.s3_bucket_count, icon: <Archive size={16} /> },
+    { label: 'NAT Gateways', count: s.nat_gateway_count, icon: <HardDrive size={16} /> },
+    { label: 'ECR Repos', count: s.ecr_repo_count, icon: <Box size={16} /> },
+    { label: 'IAM Roles', count: s.iam_role_count, icon: <Shield size={16} /> },
   ];
 
   return (
     <div className="space-y-4">
       {/* Summary tiles */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4">
         {summaryTiles.filter((t) => t.count > 0).map((tile) => (
           <SummaryTile key={tile.label} {...tile} />
         ))}
         {summaryTiles.every((t) => t.count === 0) && (
-          <div className="col-span-full text-center py-6 text-slate-400 text-sm">
+          <div className="col-span-full py-6 text-center text-sm text-gray-500">
             No AWS resources found in region <code className="font-mono">{result.region}</code>.
           </div>
         )}
       </div>
 
       {/* Detailed resource sections */}
-      <div className="space-y-3">
-
-        {/* VPCs */}
+      <div className="space-y-2.5">
         <ResourceSection title="VPCs" icon={<Network size={15} />} count={result.vpcs.length} defaultOpen>
           <ResourceTable
             columns={['VPC ID', 'CIDR', 'State', 'Default', 'Name']}
@@ -313,7 +266,6 @@ function DiscoveryResultsPanel({ result }: { result: DiscoveryResult }) {
           />
         </ResourceSection>
 
-        {/* Subnets */}
         <ResourceSection title="Subnets" icon={<Globe size={15} />} count={result.subnets.length}>
           <ResourceTable
             columns={['Subnet ID', 'VPC ID', 'CIDR', 'AZ', 'Free IPs', 'Public', 'Name']}
@@ -325,7 +277,6 @@ function DiscoveryResultsPanel({ result }: { result: DiscoveryResult }) {
           />
         </ResourceSection>
 
-        {/* Security Groups */}
         <ResourceSection title="Security Groups" icon={<Shield size={15} />} count={result.security_groups.length}>
           <ResourceTable
             columns={['SG ID', 'Name', 'VPC ID', 'Inbound Rules', 'Outbound Rules']}
@@ -336,7 +287,6 @@ function DiscoveryResultsPanel({ result }: { result: DiscoveryResult }) {
           />
         </ResourceSection>
 
-        {/* EC2 Instances */}
         <ResourceSection title="EC2 Instances" icon={<Server size={15} />} count={result.ec2_instances.length} defaultOpen>
           <ResourceTable
             columns={['Instance ID', 'Type', 'State', 'Private IP', 'Public IP', 'VPC', 'Name']}
@@ -348,7 +298,6 @@ function DiscoveryResultsPanel({ result }: { result: DiscoveryResult }) {
           />
         </ResourceSection>
 
-        {/* Load Balancers */}
         <ResourceSection title="Load Balancers" icon={<Cpu size={15} />} count={result.load_balancers.length} defaultOpen>
           <ResourceTable
             columns={['Name', 'Type', 'Scheme', 'State', 'VPC', 'DNS Name']}
@@ -360,7 +309,6 @@ function DiscoveryResultsPanel({ result }: { result: DiscoveryResult }) {
           />
         </ResourceSection>
 
-        {/* EKS Clusters */}
         <ResourceSection title="EKS Clusters" icon={<Box size={15} />} count={result.eks_clusters.length} defaultOpen>
           <ResourceTable
             columns={['Name', 'Status', 'K8s Version', 'VPC', 'Public Access', 'Private Access']}
@@ -372,7 +320,6 @@ function DiscoveryResultsPanel({ result }: { result: DiscoveryResult }) {
           />
         </ResourceSection>
 
-        {/* RDS Instances */}
         <ResourceSection title="RDS Instances" icon={<Database size={15} />} count={result.rds_instances.length} defaultOpen>
           <ResourceTable
             columns={['Identifier', 'Class', 'Engine', 'Version', 'Status', 'Multi-AZ', 'Encrypted', 'Public']}
@@ -384,7 +331,6 @@ function DiscoveryResultsPanel({ result }: { result: DiscoveryResult }) {
           />
         </ResourceSection>
 
-        {/* S3 Buckets */}
         <ResourceSection title="S3 Buckets" icon={<Archive size={15} />} count={result.s3_buckets.length}>
           <ResourceTable
             columns={['Bucket Name', 'Region', 'Created']}
@@ -392,7 +338,6 @@ function DiscoveryResultsPanel({ result }: { result: DiscoveryResult }) {
           />
         </ResourceSection>
 
-        {/* ECR Repositories */}
         <ResourceSection title="ECR Repositories" icon={<Box size={15} />} count={result.ecr_repositories.length}>
           <ResourceTable
             columns={['Name', 'URI', 'Scan on Push']}
@@ -402,14 +347,12 @@ function DiscoveryResultsPanel({ result }: { result: DiscoveryResult }) {
           />
         </ResourceSection>
 
-        {/* IAM Roles */}
         <ResourceSection title="IAM Roles (customer-managed)" icon={<Shield size={15} />} count={result.iam_roles.length}>
           <ResourceTable
             columns={['Role Name', 'Path', 'ARN']}
             rows={result.iam_roles.map((r) => [r.role_name, r.path, r.role_arn])}
           />
         </ResourceSection>
-
       </div>
     </div>
   );
@@ -462,38 +405,26 @@ function DiscoveryPanel({ account, onDiscoveryComplete }: DiscoveryPanelProps) {
   return (
     <div className="space-y-4">
       {/* Header bar */}
-      <div className="flex items-center justify-between flex-wrap gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h3 className="font-semibold text-slate-700 text-sm">AWS Infrastructure Discovery</h3>
-          {discoveredAt ? (
-            <p className="text-xs text-slate-400 mt-0.5">
-              Last scanned: {formatDate(discoveredAt)}
-            </p>
-          ) : (
-            <p className="text-xs text-slate-400 mt-0.5">No scan has been run yet.</p>
-          )}
+          <h3 className="section-title">AWS Infrastructure Discovery</h3>
+          <p className="mt-0.5 text-xs text-gray-500">
+            {discoveredAt ? `Last scanned ${formatDate(discoveredAt)}` : 'No scan has been run yet.'}
+          </p>
         </div>
         <div className="flex gap-2">
           {discoveredAt && !result && (
-            <button
-              onClick={handleLoadCached}
-              disabled={loadingCached}
-              className="flex items-center gap-1.5 px-3 py-2 rounded-xl border border-slate-200 text-slate-600 text-xs font-semibold hover:bg-slate-50 disabled:opacity-50 transition-colors"
-            >
+            <button onClick={handleLoadCached} disabled={loadingCached} className="btn btn-secondary btn-sm">
               {loadingCached
-                ? <><Loader2 size={12} className="animate-spin" /> Loading…</>
-                : <><Search size={12} /> View Last Results</>
+                ? <><Loader2 size={14} className="animate-spin" /> Loading…</>
+                : <><Search size={14} /> View Last Results</>
               }
             </button>
           )}
-          <button
-            onClick={handleRunDiscovery}
-            disabled={running}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-[#1e3a7a] text-white text-xs font-semibold hover:bg-[#2d52a8] disabled:opacity-50 transition-colors"
-          >
+          <button onClick={handleRunDiscovery} disabled={running} className="btn btn-primary btn-sm">
             {running
-              ? <><Loader2 size={12} className="animate-spin" /> Scanning AWS…</>
-              : <><Search size={12} /> {discoveredAt ? 'Re-scan' : 'Run Discovery'}</>
+              ? <><Loader2 size={14} className="animate-spin" /> Scanning AWS…</>
+              : <><Radar size={14} /> {discoveredAt ? 'Re-scan' : 'Run Discovery'}</>
             }
           </button>
         </div>
@@ -501,36 +432,36 @@ function DiscoveryPanel({ account, onDiscoveryComplete }: DiscoveryPanelProps) {
 
       {/* Scanning progress */}
       {running && (
-        <div className="bg-blue-50 border border-blue-100 rounded-xl p-4 text-sm text-blue-700">
-          <div className="flex items-center gap-2 mb-2">
-            <Loader2 size={15} className="animate-spin text-blue-500" />
-            <span className="font-semibold">Scanning AWS account {account.account_id}…</span>
+        <div className="rounded-[10px] border border-blue-200 bg-info-bg p-4 text-sm text-info" role="status">
+          <div className="mb-1.5 flex items-center gap-2">
+            <Loader2 size={15} className="animate-spin" />
+            <span className="font-medium">Scanning AWS account {account.account_id}…</span>
           </div>
-          <p className="text-xs text-blue-600">
+          <p className="text-xs">
             Discovering VPCs, subnets, EC2, EKS, RDS, S3, load balancers, security groups,
             ECR, and IAM roles. This may take 10–20 seconds.
           </p>
-          <div className="mt-3 h-1.5 bg-blue-100 rounded-full overflow-hidden">
-            <div className="h-full bg-blue-400 rounded-full animate-pulse w-3/4" />
+          <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-blue-100">
+            <div className="h-full w-3/4 animate-pulse rounded-full bg-blue-400" />
           </div>
         </div>
       )}
 
       {/* Error */}
       {error && (
-        <div className="flex items-start gap-2 bg-red-50 border border-red-100 rounded-xl p-3 text-sm text-red-700">
-          <XCircle size={15} className="shrink-0 mt-0.5 text-red-500" />
+        <div className="flex items-start gap-2 rounded-[10px] border border-red-200 bg-danger-bg p-3 text-sm text-danger" role="alert">
+          <XCircle size={16} className="mt-0.5 shrink-0" />
           <span>{error}</span>
         </div>
       )}
 
       {/* Summary banner for accounts that have been scanned but result not loaded yet */}
       {!result && !running && discoveredAt && account.discovery_summary && (
-        <div className="bg-slate-50 border border-slate-100 rounded-xl p-4">
-          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">
-            Last Scan Summary — click "View Last Results" to see details
+        <div className="card p-4">
+          <p className="mb-3 text-xs font-medium text-gray-500">
+            Last scan summary — select “View Last Results” for full details
           </p>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
             {[
               { label: 'VPCs',       count: account.discovery_summary.vpc_count },
               { label: 'EC2',        count: account.discovery_summary.ec2_instance_count },
@@ -541,9 +472,9 @@ function DiscoveryPanel({ account, onDiscoveryComplete }: DiscoveryPanelProps) {
               { label: 'Sec Groups', count: account.discovery_summary.security_group_count },
               { label: 'IAM Roles',  count: account.discovery_summary.iam_role_count },
             ].map(({ label, count }) => (
-              <div key={label} className="bg-white rounded-lg border border-slate-100 p-2.5 text-center">
-                <p className="text-lg font-bold text-slate-800">{count}</p>
-                <p className="text-xs text-slate-400">{label}</p>
+              <div key={label} className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
+                <p className="text-lg font-semibold text-gray-900 tabular-nums">{count}</p>
+                <p className="text-xs text-gray-500">{label}</p>
               </div>
             ))}
           </div>
@@ -555,17 +486,66 @@ function DiscoveryPanel({ account, onDiscoveryComplete }: DiscoveryPanelProps) {
 
       {/* Empty state */}
       {!result && !running && !discoveredAt && !error && (
-        <div className="flex flex-col items-center gap-3 py-8 text-center bg-slate-50 rounded-xl border border-dashed border-slate-200">
-          <Search size={28} className="text-slate-300" />
-          <div>
-            <p className="text-sm font-semibold text-slate-600">No discovery scan yet</p>
-            <p className="text-xs text-slate-400 mt-1">
-              Run a discovery scan to see what AWS resources already exist in this account.
-              This helps Infra Genie plan your deployment.
-            </p>
-          </div>
+        <div className="flex flex-col items-center gap-2 rounded-[10px] border border-dashed border-gray-300 bg-white px-4 py-6 text-center">
+          <Radar size={22} className="text-gray-400" />
+          <p className="text-sm font-medium text-gray-700">No discovery scan yet</p>
+          <p className="max-w-md text-xs text-gray-500">
+            Run a discovery scan to see what AWS resources already exist in this account.
+            This helps Infra Genie plan your deployment.
+          </p>
         </div>
       )}
+    </div>
+  );
+}
+
+// ── Error ownership ───────────────────────────────────────────────────────────
+
+/** An error raised by an action on one specific account; rendered in that account's card. */
+export interface AccountError {
+  message: string;
+  code?: string;
+}
+
+/**
+ * An action on a single account failed. If the backend answered (any HTTP
+ * status), the failure belongs to that account and is shown in its card. If no
+ * response arrived at all (network down, backend unreachable) the problem is
+ * not account-specific, so it is reported globally instead.
+ */
+function toAccountError(err: unknown, fallback: string): AccountError | null {
+  if (err instanceof ApiError) return { message: err.message || fallback, code: err.code };
+  return null;
+}
+
+/** Recovery guidance for structured backend error codes. */
+const ERROR_HINTS: Record<string, string> = {
+  NoCredentials:
+    'This is an Infra Genie server configuration issue, not a problem with your AWS account. ' +
+    'An administrator must configure AWS credentials for the backend, then select Verify Again.',
+  AccessDenied:
+    'Check that the CloudFormation stack deployed successfully and uses the External ID from this connection. ' +
+    'Use Continue setup to download the template again.',
+  AccessDeniedException:
+    'Check that the CloudFormation stack deployed successfully and uses the External ID from this connection. ' +
+    'Use Continue setup to download the template again.',
+  NoSuchEntity: 'The IAM role was not found. Deploy the CloudFormation stack, then verify again.',
+  AccountMismatch: 'The Role ARN belongs to a different AWS account. Use Continue setup to enter the correct ARN.',
+  ExpiredTokenException: 'Temporary credentials expired. Select Verify Again to retry.',
+};
+
+function AccountErrorPanel({ error }: { error: AccountError }) {
+  const hint = error.code ? ERROR_HINTS[error.code] : undefined;
+  return (
+    <div className="mt-4 flex items-start gap-2.5 rounded-[10px] border border-red-200 bg-danger-bg px-3.5 py-3 text-danger" role="alert">
+      <XCircle size={16} className="mt-0.5 shrink-0" />
+      <div className="min-w-0 text-[13px] leading-5">
+        <p className="font-medium">{error.message}</p>
+        {hint && <p className="mt-1 text-red-800/90">{hint}</p>}
+        {error.code && (
+          <p className="mt-1.5 font-mono text-[11px] text-red-700/80">Error code: {error.code}</p>
+        )}
+      </div>
     </div>
   );
 }
@@ -576,123 +556,143 @@ interface AccountCardProps {
   account: CloudAccountOut;
   onVerifyAgain: (id: string) => void;
   onDisconnect: (id: string) => void;
+  onContinueSetup: (id: string) => void;
   onDiscoveryComplete: () => void;
   verifyingId: string | null;
   disconnectingId: string | null;
+  resumingId: string | null;
+  /** Error from the most recent action on this account, if it failed. */
+  actionError?: AccountError;
 }
 
 function AccountCard({
   account,
   onVerifyAgain,
   onDisconnect,
+  onContinueSetup,
   onDiscoveryComplete,
   verifyingId,
   disconnectingId,
+  resumingId,
+  actionError,
 }: AccountCardProps) {
   const isVerifying    = verifyingId === account.id;
   const isDisconnecting = disconnectingId === account.id;
+  const isResuming     = resumingId === account.id;
+  // PENDING: stack not deployed / ARN not entered yet. FAILED: user may need to
+  // fix the stack or paste a different Role ARN.
+  const canContinueSetup = account.status === 'PENDING' || account.status === 'FAILED';
   const [showDiscovery, setShowDiscovery] = useState(false);
 
+  // One error panel per card: the latest action's error wins (it is fresher and
+  // carries an error code); otherwise fall back to the error stored on the record.
+  const cardError: AccountError | null =
+    actionError ??
+    (account.status === 'FAILED' && account.connection_error ? { message: account.connection_error } : null);
+
   return (
-    <div className="bg-white rounded-2xl border border-slate-100 shadow-sm hover:shadow-md transition-shadow">
-      {/* Card header */}
-      <div className="p-5">
-        <div className="flex items-start justify-between gap-3 mb-4">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-[#FF9900]/10 flex items-center justify-center shrink-0">
-              <span className="text-xl">☁️</span>
+    <div className="card overflow-hidden">
+      <div className="p-4 sm:p-5">
+        {/* Identity + actions */}
+        <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+          <div className="flex min-w-0 items-center gap-3">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[10px] border border-orange-100 bg-orange-50 text-[#c2410c]">
+              <Cloud size={20} strokeWidth={1.8} />
             </div>
-            <div>
-              <p className="font-semibold text-slate-800 text-sm">{account.provider} Account</p>
-              <p className="font-mono text-xs text-slate-500 mt-0.5">{account.account_id}</p>
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="text-sm font-semibold text-gray-900">{account.provider} Account</p>
+                <StatusBadge status={account.status} />
+              </div>
+              <p className="mt-0.5 font-mono text-xs text-gray-500">{account.account_id}</p>
             </div>
           </div>
-          <StatusBadge status={account.status} />
+
+          <div className="flex flex-wrap gap-2">
+            {canContinueSetup && (
+              <button
+                onClick={() => onContinueSetup(account.id)}
+                disabled={isResuming}
+                className={`btn btn-sm ${account.status === 'PENDING' ? 'btn-primary' : 'btn-secondary'}`}
+              >
+                {isResuming ? (
+                  <><Loader2 size={14} className="animate-spin" /> Loading…</>
+                ) : (
+                  <>Continue setup <ChevronRight size={14} /></>
+                )}
+              </button>
+            )}
+
+            {account.status === 'CONNECTED' && (
+              <button
+                onClick={() => setShowDiscovery((v) => !v)}
+                className={`btn btn-sm ${showDiscovery ? 'btn-primary' : 'btn-secondary'}`}
+                aria-expanded={showDiscovery}
+              >
+                <Radar size={14} />
+                {showDiscovery ? 'Hide Discovery' : 'AWS Discovery'}
+              </button>
+            )}
+
+            {(account.status === 'CONNECTED' || account.status === 'FAILED') && account.role_arn && (
+              <button
+                onClick={() => onVerifyAgain(account.id)}
+                disabled={isVerifying}
+                className="btn btn-secondary btn-sm"
+              >
+                {isVerifying ? (
+                  <><Loader2 size={14} className="animate-spin" /> Verifying…</>
+                ) : (
+                  <><RefreshCw size={14} /> Verify Again</>
+                )}
+              </button>
+            )}
+
+            {account.status !== 'DISCONNECTED' && (
+              <button
+                onClick={() => onDisconnect(account.id)}
+                disabled={isDisconnecting}
+                className="btn btn-danger btn-sm"
+              >
+                {isDisconnecting ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
+                {isDisconnecting ? 'Removing…' : 'Disconnect'}
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Detail grid */}
-        <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs mb-4">
+        <dl className="mt-4 grid grid-cols-2 gap-x-6 gap-y-3 border-t border-gray-100 pt-4 text-[13px] lg:grid-cols-5">
           {[
             ['Region',        account.region],
             ['Role',          account.role_arn ? 'InfraGenieExecutionRole' : '—'],
             ['Connected',     formatDate(account.created_at)],
             ['Last verified', formatDate(account.last_verified_at)],
+            ['Last discovery', formatDate(account.discovery_ran_at)],
           ].map(([label, value]) => (
-            <div key={label}>
-              <p className="text-slate-400">{label}</p>
-              <p className="text-slate-700 font-medium truncate" title={value ?? undefined}>
+            <div key={label} className="min-w-0">
+              <dt className="text-xs text-gray-500">{label}</dt>
+              <dd className="mt-0.5 truncate font-medium text-gray-800" title={value ?? undefined}>
                 {value}
-              </p>
+              </dd>
             </div>
           ))}
-        </div>
+        </dl>
 
-        {/* Discovery badge */}
-        {account.discovery_ran_at && (
-          <div className="mb-4 flex items-center gap-1.5 text-xs text-teal-700 bg-teal-50 border border-teal-100 rounded-lg px-2.5 py-1.5">
-            <Search size={11} className="shrink-0" />
-            <span>Discovery ran: {formatDate(account.discovery_ran_at)}</span>
-          </div>
+        {account.status === 'PENDING' && (
+          <p className="mt-4 flex items-start gap-2 rounded-[10px] border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs leading-5 text-amber-900">
+            <Clock size={14} className="mt-0.5 shrink-0 text-amber-600" />
+            Setup isn't finished. Deploy the CloudFormation stack in your AWS account, then
+            paste the Role ARN to verify the connection.
+          </p>
         )}
 
-        {/* Error message */}
-        {account.status === 'FAILED' && account.connection_error && (
-          <div className="flex items-start gap-2 bg-red-50 border border-red-100 rounded-xl p-3 text-xs text-red-700 mb-4">
-            <AlertTriangle size={13} className="shrink-0 mt-0.5 text-red-500" />
-            <span>{account.connection_error}</span>
-          </div>
-        )}
-
-        {/* Actions */}
-        <div className="flex flex-wrap gap-2">
-          {(account.status === 'CONNECTED' || account.status === 'FAILED') && account.role_arn && (
-            <button
-              onClick={() => onVerifyAgain(account.id)}
-              disabled={isVerifying}
-              className="flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl border border-[#1e3a7a] text-[#1e3a7a] text-xs font-semibold hover:bg-[#1e3a7a]/5 disabled:opacity-50 transition-colors"
-            >
-              {isVerifying ? (
-                <><Loader2 size={13} className="animate-spin" /> Verifying…</>
-              ) : (
-                <><RefreshCw size={13} /> Verify Again</>
-              )}
-            </button>
-          )}
-
-          {account.status === 'CONNECTED' && (
-            <button
-              onClick={() => setShowDiscovery((v) => !v)}
-              className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold transition-colors border ${
-                showDiscovery
-                  ? 'bg-[#1e3a7a] text-white border-[#1e3a7a]'
-                  : 'border-teal-300 text-teal-700 hover:bg-teal-50'
-              }`}
-            >
-              <Search size={13} />
-              {showDiscovery ? 'Hide Discovery' : 'AWS Discovery'}
-            </button>
-          )}
-
-          {account.status !== 'DISCONNECTED' && (
-            <button
-              onClick={() => onDisconnect(account.id)}
-              disabled={isDisconnecting}
-              className="flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl border border-red-200 text-red-600 text-xs font-semibold hover:bg-red-50 disabled:opacity-50 transition-colors"
-            >
-              {isDisconnecting ? (
-                <Loader2 size={13} className="animate-spin" />
-              ) : (
-                <Trash2 size={13} />
-              )}
-              {isDisconnecting ? 'Removing…' : 'Disconnect'}
-            </button>
-          )}
-        </div>
+        {cardError && <AccountErrorPanel error={cardError} />}
       </div>
 
       {/* Discovery panel (expandable) */}
       {showDiscovery && account.status === 'CONNECTED' && (
-        <div className="border-t border-slate-100 p-5 bg-slate-50/50">
+        <div className="border-t border-gray-200 bg-gray-50 p-4 sm:p-5">
           <DiscoveryPanel
             account={account}
             onDiscoveryComplete={onDiscoveryComplete}
@@ -700,6 +700,80 @@ function AccountCard({
         </div>
       )}
     </div>
+  );
+}
+
+// ── Empty state with onboarding steps ─────────────────────────────────────────
+
+const ONBOARDING_STEPS = [
+  {
+    icon: KeyRound,
+    title: 'Enter Account ID',
+    desc: 'Provide your 12-digit AWS Account ID and the region you want to deploy into.',
+  },
+  {
+    icon: FileCode2,
+    title: 'Deploy CloudFormation',
+    desc: 'Launch the generated stack to create a cross-account IAM role with a unique External ID.',
+  },
+  {
+    icon: Radar,
+    title: 'Discover & Deploy',
+    desc: 'Infra Genie scans existing resources, then plans and deploys new infrastructure.',
+  },
+];
+
+function NoAccountsState({ onConnect }: { onConnect: () => void }) {
+  return (
+    <section className="card overflow-hidden" aria-labelledby="no-accounts-heading">
+      <div className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between sm:p-6">
+        <div className="flex items-start gap-4">
+          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-primary-100 bg-primary-50 text-primary">
+            <Cloud size={22} strokeWidth={1.75} />
+          </div>
+          <div>
+            <h2 id="no-accounts-heading" className="section-title">No AWS accounts connected</h2>
+            <p className="mt-1 max-w-2xl text-sm text-gray-500">
+              Infra Genie needs access to an AWS account to discover existing resources and deploy
+              infrastructure. Setup takes about five minutes and only requires deploying one
+              CloudFormation stack.
+            </p>
+          </div>
+        </div>
+        <button onClick={onConnect} className="btn btn-secondary shrink-0 self-start sm:self-center">
+          Start setup
+          <ChevronRight size={16} />
+        </button>
+      </div>
+
+      <div className="border-t border-gray-200 bg-gray-50/60 p-5 sm:p-6">
+        <p className="mb-3 text-xs font-medium uppercase tracking-wide text-gray-500">How connecting works</p>
+        <ol className="grid grid-cols-1 gap-3 md:grid-cols-3">
+          {ONBOARDING_STEPS.map(({ icon: Icon, title, desc }, i) => (
+            <li key={title} className="relative flex gap-3 rounded-[10px] border border-gray-200 bg-white p-4">
+              <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary text-xs font-semibold text-white">
+                {i + 1}
+              </span>
+              <div className="min-w-0">
+                <p className="flex items-center gap-1.5 text-sm font-semibold text-gray-900">
+                  <Icon size={15} className="text-gray-400" aria-hidden />
+                  {title}
+                </p>
+                <p className="mt-1 text-[13px] leading-5 text-gray-500">{desc}</p>
+              </div>
+              {i < ONBOARDING_STEPS.length - 1 && (
+                <span
+                  className="absolute -right-[15px] top-1/2 z-10 hidden h-6 w-6 -translate-y-1/2 items-center justify-center rounded-full border border-gray-200 bg-white text-gray-400 md:flex"
+                  aria-hidden
+                >
+                  <ChevronRight size={14} />
+                </span>
+              )}
+            </li>
+          ))}
+        </ol>
+      </div>
+    </section>
   );
 }
 
@@ -712,7 +786,28 @@ export default function CloudAccountsPage() {
   const [showWizard, setShowWizard] = useState(false);
   const [verifyingId, setVerifyingId] = useState<string | null>(null);
   const [disconnectingId, setDisconnectingId] = useState<string | null>(null);
+  const [resumingId, setResumingId] = useState<string | null>(null);
+  const [resumeSetup, setResumeSetup] = useState<CloudAccountConnectResponse | null>(null);
   const [actionError, setActionError] = useState('');
+  const [accountErrors, setAccountErrors] = useState<Record<string, AccountError>>({});
+
+  const setAccountError = (id: string, error: AccountError | null) =>
+    setAccountErrors((prev) => {
+      if (!error) {
+        if (!(id in prev)) return prev;
+        const { [id]: _removed, ...rest } = prev;
+        return rest;
+      }
+      return { ...prev, [id]: error };
+    });
+
+  /** Route a failed account action to its card, or to the global banner if it wasn't account-specific. */
+  const reportAccountFailure = (id: string, err: unknown, fallback: string) => {
+    const owned = toAccountError(err, fallback);
+    if (owned) setAccountError(id, owned);
+    else if (err instanceof TypeError) setActionError("Couldn't reach the Infra Genie backend. Check that it's running and try again.");
+    else setActionError(err instanceof Error ? err.message : fallback);
+  };
   const [actionSuccess, setActionSuccess] = useState('');
 
   const loadAccounts = useCallback(async () => {
@@ -730,26 +825,70 @@ export default function CloudAccountsPage() {
 
   useEffect(() => { loadAccounts(); }, [loadAccounts]);
 
+  // While the wizard is open: close on Escape, lock background scrolling, and
+  // return focus to the element that opened it.
+  useEffect(() => {
+    if (!showWizard) return;
+    const opener = document.activeElement as HTMLElement | null;
+    const scrollers = [document.body, document.querySelector('main')].filter(Boolean) as HTMLElement[];
+    const prev = scrollers.map((el) => el.style.overflow);
+    scrollers.forEach((el) => { el.style.overflow = 'hidden'; });
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setShowWizard(false);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      scrollers.forEach((el, i) => { el.style.overflow = prev[i]; });
+      opener?.focus?.();
+    };
+  }, [showWizard]);
+
+  const openWizard = () => {
+    setResumeSetup(null);
+    setShowWizard(true);
+    setActionError('');
+    setActionSuccess('');
+  };
+
+  /** Re-open the wizard at the CloudFormation step for an unfinished connection. */
+  const handleContinueSetup = async (connectionId: string) => {
+    setActionError('');
+    setActionSuccess('');
+    setResumingId(connectionId);
+    try {
+      const setup = await getAWSConnectionSetup(connectionId);
+      setResumeSetup(setup);
+      setShowWizard(true);
+    } catch (err: unknown) {
+      reportAccountFailure(connectionId, err, 'Could not load setup details.');
+    } finally {
+      setResumingId(null);
+    }
+  };
+
   const handleVerifyAgain = async (connectionId: string) => {
     const account = accounts.find((a) => a.id === connectionId);
     if (!account?.role_arn) return;
     setActionError('');
     setActionSuccess('');
+    setAccountError(connectionId, null);
     setVerifyingId(connectionId);
     try {
       const result = await verifyAWSConnection(connectionId, { role_arn: account.role_arn });
       if (result.status === 'CONNECTED') {
         setActionSuccess(`AWS account ${account.account_id} verified successfully.`);
-        await loadAccounts();
       } else {
-        setActionError(result.message ?? 'Verification failed.');
-        await loadAccounts();
+        setAccountError(connectionId, {
+          message: result.message ?? 'Verification failed.',
+          code: result.error_code,
+        });
       }
     } catch (err: unknown) {
-      setActionError(err instanceof Error ? err.message : 'Verification failed.');
+      reportAccountFailure(connectionId, err, 'Verification failed.');
     } finally {
       setVerifyingId(null);
     }
+    // Refresh either way so status / last-verified reflect what the backend stored.
+    await loadAccounts();
   };
 
   const handleDisconnect = async (connectionId: string) => {
@@ -763,13 +902,14 @@ export default function CloudAccountsPage() {
 
     setActionError('');
     setActionSuccess('');
+    setAccountError(connectionId, null);
     setDisconnectingId(connectionId);
     try {
       await disconnectAWSAccount(connectionId);
       setActionSuccess(`AWS account ${account.account_id} disconnected.`);
       await loadAccounts();
     } catch (err: unknown) {
-      setActionError(err instanceof Error ? err.message : 'Failed to disconnect.');
+      reportAccountFailure(connectionId, err, 'Failed to disconnect.');
     } finally {
       setDisconnectingId(null);
     }
@@ -777,6 +917,7 @@ export default function CloudAccountsPage() {
 
   const handleConnected = async (newAccount: CloudAccountOut) => {
     setShowWizard(false);
+    setAccountError(newAccount.id, null);
     setActionSuccess(`AWS account ${newAccount.account_id} connected successfully!`);
     await loadAccounts();
   };
@@ -791,190 +932,148 @@ export default function CloudAccountsPage() {
   const failed    = accounts.filter((a) => a.status === 'FAILED');
   const other     = accounts.filter((a) => a.status === 'DISCONNECTED');
 
+  // Before the first load completes, show placeholders rather than misleading zeros.
+  const hasData = !loading || accounts.length > 0;
+  const count = (n: number) => (hasData && !loadError ? n : '—');
+
   // ── Render ────────────────────────────────────────────────────────────────
 
   return (
-    <div className="h-full overflow-y-auto bg-[#f4f6fa]">
-      <div className="max-w-5xl mx-auto px-6 py-8 space-y-6">
-
-        {/* Page header */}
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-[#1e3a7a]/10 flex items-center justify-center">
-              <Cloud size={22} className="text-[#1e3a7a]" />
-            </div>
-            <div>
-              <h1 className="text-xl font-bold text-slate-800">Cloud Accounts</h1>
-              <p className="text-sm text-slate-500">
-                Connect AWS accounts and discover existing infrastructure.
-              </p>
-            </div>
-          </div>
-          <button
-            onClick={() => { setShowWizard(true); setActionError(''); setActionSuccess(''); }}
-            className="flex items-center gap-2 px-4 py-2.5 bg-[#1e3a7a] text-white text-sm font-semibold rounded-xl hover:bg-[#2d52a8] transition-colors shadow-sm"
-          >
-            <PlusCircle size={16} />
-            Connect AWS Account
-          </button>
-        </div>
-
-        {/* Stats bar */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          {[
-            { label: 'Connected',    count: connected.length, color: 'text-green-600',  bg: 'bg-green-50',  border: 'border-green-100' },
-            { label: 'Pending',      count: pending.length,   color: 'text-yellow-600', bg: 'bg-yellow-50', border: 'border-yellow-100' },
-            { label: 'Failed',       count: failed.length,    color: 'text-red-600',    bg: 'bg-red-50',    border: 'border-red-100' },
-            { label: 'Disconnected', count: other.length,     color: 'text-slate-500',  bg: 'bg-slate-50',  border: 'border-slate-100' },
-          ].map(({ label, count, color, bg, border }) => (
-            <div key={label} className={`${bg} border ${border} rounded-xl p-3 text-center`}>
-              <p className={`text-2xl font-bold ${color}`}>{count}</p>
-              <p className="text-xs text-slate-500 mt-0.5">{label}</p>
-            </div>
-          ))}
-        </div>
-
-        {/* Action feedback */}
-        {actionSuccess && (
-          <div className="flex items-center justify-between gap-2 bg-green-50 border border-green-100 rounded-xl px-4 py-3 text-sm text-green-700">
-            <div className="flex items-center gap-2">
-              <CheckCircle2 size={15} className="shrink-0" />
-              {actionSuccess}
-            </div>
-            <button onClick={() => setActionSuccess('')}><X size={14} /></button>
-          </div>
-        )}
-        {actionError && (
-          <div className="flex items-center justify-between gap-2 bg-red-50 border border-red-100 rounded-xl px-4 py-3 text-sm text-red-700">
-            <div className="flex items-center gap-2">
-              <XCircle size={15} className="shrink-0" />
-              {actionError}
-            </div>
-            <button onClick={() => setActionError('')}><X size={14} /></button>
-          </div>
-        )}
-
-        {/* Wizard modal */}
-        {showWizard && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
-            <div className="w-full max-w-2xl">
-              <AWSConnectWizard
-                onConnected={handleConnected}
-                onCancel={() => setShowWizard(false)}
-              />
-            </div>
-          </div>
-        )}
-
-        {/* Content */}
-        {loading ? (
-          <div className="flex items-center justify-center py-20">
-            <Loader2 size={24} className="animate-spin text-[#1e3a7a]" />
-          </div>
-        ) : loadError ? (
-          <div className="flex flex-col items-center gap-3 py-16 text-center">
-            <XCircle size={32} className="text-red-400" />
-            <p className="text-slate-600 text-sm">{loadError}</p>
+    <div className="page">
+      <PageHeader
+        title="Cloud Accounts"
+        description="Connect and manage your AWS accounts."
+        icon={Cloud}
+        actions={
+          <>
             <button
               onClick={loadAccounts}
-              className="flex items-center gap-2 px-4 py-2 rounded-xl border border-slate-200 text-slate-600 text-sm hover:bg-slate-50 transition-colors"
+              disabled={loading}
+              className="btn btn-secondary btn-icon"
+              title="Refresh"
+              aria-label="Refresh accounts"
             >
-              <RefreshCw size={14} /> Retry
+              <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
             </button>
-          </div>
-        ) : accounts.length === 0 ? (
-          /* Empty state */
-          <div className="flex flex-col items-center gap-4 py-20 text-center">
-            <div className="w-16 h-16 rounded-2xl bg-slate-100 flex items-center justify-center">
-              <Cloud size={32} className="text-slate-300" />
-            </div>
-            <div>
-              <p className="font-semibold text-slate-700">No AWS accounts connected</p>
-              <p className="text-slate-400 text-sm mt-1">
-                Connect your first AWS account to start deploying infrastructure.
-              </p>
-            </div>
-            <button
-              onClick={() => setShowWizard(true)}
-              className="flex items-center gap-2 px-5 py-2.5 bg-[#1e3a7a] text-white text-sm font-semibold rounded-xl hover:bg-[#2d52a8] transition-colors"
-            >
-              <PlusCircle size={16} />
+            <button onClick={openWizard} className="btn btn-primary">
+              <Plus size={16} />
               Connect AWS Account
             </button>
+          </>
+        }
+      />
 
-            {/* How it works */}
-            <div className="mt-6 grid grid-cols-1 sm:grid-cols-3 gap-4 max-w-2xl text-left">
-              {[
-                {
-                  step: '1',
-                  title: 'Enter Account ID',
-                  desc: 'Provide your 12-digit AWS Account ID and region.',
-                },
-                {
-                  step: '2',
-                  title: 'Deploy CloudFormation Stack',
-                  desc: 'We generate a template that creates a cross-account IAM role.',
-                },
-                {
-                  step: '3',
-                  title: 'Discover & Deploy',
-                  desc: 'Infra Genie scans existing resources then plans and deploys new infrastructure.',
-                },
-              ].map(({ step, title, desc }) => (
-                <div key={step} className="bg-white rounded-xl border border-slate-100 p-4">
-                  <div className="w-7 h-7 rounded-full bg-[#1e3a7a] text-white text-xs font-bold flex items-center justify-center mb-2">
-                    {step}
-                  </div>
-                  <p className="font-semibold text-slate-700 text-sm">{title}</p>
-                  <p className="text-slate-400 text-xs mt-1">{desc}</p>
-                </div>
-              ))}
-            </div>
-          </div>
-        ) : (
-          /* Account cards */
-          <div className="space-y-6">
-            {[
-              { heading: '🟢 Connected', items: connected },
-              { heading: '🟡 Pending Setup', items: pending },
-              { heading: '🔴 Failed', items: failed },
-              { heading: '⚫ Disconnected', items: other },
-            ]
-              .filter(({ items }) => items.length > 0)
-              .map(({ heading, items }) => (
-                <div key={heading}>
-                  <h2 className="text-sm font-semibold text-slate-500 uppercase tracking-wider mb-3">
-                    {heading}
-                  </h2>
-                  <div className="space-y-4">
-                    {items.map((account) => (
-                      <AccountCard
-                        key={account.id}
-                        account={account}
-                        onVerifyAgain={handleVerifyAgain}
-                        onDisconnect={handleDisconnect}
-                        onDiscoveryComplete={handleDiscoveryComplete}
-                        verifyingId={verifyingId}
-                        disconnectingId={disconnectingId}
-                      />
-                    ))}
-                  </div>
-                </div>
-              ))}
-          </div>
-        )}
+      {/* Stats */}
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4 lg:gap-4">
+        <StatCard label="Connected"    value={count(connected.length)} icon={CheckCircle2} tone="success" />
+        <StatCard label="Pending"      value={count(pending.length)}   icon={Clock}        tone="warning" />
+        <StatCard label="Failed"       value={count(failed.length)}    icon={XCircle}      tone="danger" />
+        <StatCard label="Disconnected" value={count(other.length)}     icon={WifiOff}      tone="neutral" />
+      </div>
 
-        {/* Security note */}
-        <div className="bg-slate-50 border border-slate-100 rounded-xl p-4 text-xs text-slate-500 flex gap-2">
-          <AlertTriangle size={14} className="shrink-0 mt-0.5 text-slate-400" />
-          <p>
-            <strong className="text-slate-600">Security:</strong> Infra Genie never stores
-            your AWS access keys or secret keys. All access uses temporary STS credentials
-            obtained via cross-account IAM role assumption with a unique External ID per
-            connection. Discovery calls are read-only (Describe / List) — no resources are
-            created or modified during scanning.
-          </p>
+      {/* Action feedback */}
+      {actionSuccess && (
+        <div className="flex items-center justify-between gap-2 rounded-[10px] border border-green-200 bg-success-bg px-4 py-2.5 text-sm text-success" role="status">
+          <div className="flex items-center gap-2">
+            <CheckCircle2 size={16} className="shrink-0" />
+            {actionSuccess}
+          </div>
+          <button onClick={() => setActionSuccess('')} className="btn btn-ghost btn-sm btn-icon -mr-2" aria-label="Dismiss">
+            <X size={14} />
+          </button>
         </div>
+      )}
+      {actionError && (
+        <div className="flex items-center justify-between gap-2 rounded-[10px] border border-red-200 bg-danger-bg px-4 py-2.5 text-sm text-danger" role="alert">
+          <div className="flex items-center gap-2">
+            <XCircle size={16} className="shrink-0" />
+            {actionError}
+          </div>
+          <button onClick={() => setActionError('')} className="btn btn-ghost btn-sm btn-icon -mr-2" aria-label="Dismiss">
+            <X size={14} />
+          </button>
+        </div>
+      )}
+
+      {/* Wizard modal */}
+      {/* Portalled to <body> so the overlay sits outside the page's scroll region. */}
+      {showWizard && createPortal(
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/45 sm:p-6"
+          onClick={(e) => e.target === e.currentTarget && setShowWizard(false)}
+        >
+          <AWSConnectWizard
+            key={resumeSetup?.connection_id ?? 'new'}
+            resume={resumeSetup}
+            onConnected={handleConnected}
+            onCancel={() => { setShowWizard(false); loadAccounts(); }}
+          />
+        </div>,
+        document.body,
+      )}
+
+      {/* Content */}
+      {loading && accounts.length === 0 ? (
+        <div className="card">
+          <LoadingState label="Loading accounts…" />
+        </div>
+      ) : loadError ? (
+        <div className="card flex flex-col items-center gap-3 px-6 py-10 text-center">
+          <XCircle size={28} className="text-red-500" />
+          <p className="text-sm text-gray-600">{loadError}</p>
+          <button onClick={loadAccounts} className="btn btn-secondary btn-sm">
+            <RefreshCw size={14} /> Retry
+          </button>
+        </div>
+      ) : accounts.length === 0 ? (
+        <NoAccountsState onConnect={openWizard} />
+      ) : (
+        /* Account cards */
+        <div className="space-y-6">
+          {[
+            { heading: 'Connected', items: connected },
+            { heading: 'Pending setup', items: pending },
+            { heading: 'Failed', items: failed },
+            { heading: 'Disconnected', items: other },
+          ]
+            .filter(({ items }) => items.length > 0)
+            .map(({ heading, items }) => (
+              <section key={heading} aria-label={heading}>
+                <h2 className="mb-2.5 flex items-center gap-2 text-sm font-semibold text-gray-700">
+                  {heading}
+                  <span className="badge badge-neutral">{items.length}</span>
+                </h2>
+                <div className="space-y-3">
+                  {items.map((account) => (
+                    <AccountCard
+                      key={account.id}
+                      account={account}
+                      onVerifyAgain={handleVerifyAgain}
+                      onDisconnect={handleDisconnect}
+                      onContinueSetup={handleContinueSetup}
+                      onDiscoveryComplete={handleDiscoveryComplete}
+                      verifyingId={verifyingId}
+                      disconnectingId={disconnectingId}
+                      resumingId={resumingId}
+                      actionError={accountErrors[account.id]}
+                    />
+                  ))}
+                </div>
+              </section>
+            ))}
+        </div>
+      )}
+
+      {/* Security note */}
+      <div className="flex gap-3 rounded-[10px] border border-gray-200 bg-white px-4 py-3 text-xs leading-5 text-gray-500">
+        <ShieldCheck size={16} className="mt-0.5 shrink-0 text-success" />
+        <p>
+          <span className="font-medium text-gray-700">Security:</span> Infra Genie never stores
+          your AWS access keys or secret keys. All access uses temporary STS credentials
+          obtained via cross-account IAM role assumption with a unique External ID per
+          connection. Discovery calls are read-only (Describe / List) — no resources are
+          created or modified during scanning.
+        </p>
       </div>
     </div>
   );

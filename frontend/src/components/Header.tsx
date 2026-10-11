@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import {
-  Search, Bell, Command, LogOut, Moon,
-  Settings as SettingsIcon, PanelLeft, Zap, User, Shield,
+  Search, Bell, Command, LogOut, Moon, Menu, ChevronRight,
+  Settings as SettingsIcon, User,
 } from 'lucide-react';
 import { useAuth } from '@/context/useAuth';
 import type { UserRole } from '@/api';
@@ -16,7 +16,7 @@ const roleLabels: Record<UserRole, string> = {
 };
 
 const roleBadgeColors: Record<UserRole, string> = {
-  user: 'bg-slate-100 text-slate-600 border-slate-200/80',
+  user: 'bg-gray-100 text-gray-600 border-gray-200/80',
   organization: 'bg-teal-50 text-teal-700 border-teal-200/80',
   developer: 'bg-blue-50 text-blue-700 border-blue-200/80',
   devops_engineer: 'bg-purple-50 text-purple-700 border-purple-200/80',
@@ -38,17 +38,14 @@ function getInitials(name: string): string {
 }
 
 export default function Header({
-  title,
-  subtitle,
+  crumbs,
   onNavigate,
-  sidebarOpen,
-  onToggleSidebar,
+  onOpenMobileNav,
 }: {
-  title: string;
-  subtitle: string;
+  /** Breadcrumb trail for the current view, e.g. ['Deployments', 'Review Deployment']. */
+  crumbs: string[];
   onNavigate?: (p: 'settings' | any) => void;
-  sidebarOpen?: boolean;
-  onToggleSidebar?: () => void;
+  onOpenMobileNav?: () => void;
 }) {
   const { user, logout } = useAuth();
   const [open, setOpen] = useState(false);
@@ -60,8 +57,13 @@ export default function Header({
     const handler = (e: MouseEvent) => {
       if (dropRef.current && !dropRef.current.contains(e.target as Node)) setOpen(false);
     };
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setOpen(false);
     document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', handler);
+      document.removeEventListener('keydown', onKey);
+    };
   }, []);
 
   // Global Cmd+K / Ctrl+K keyboard shortcut
@@ -99,41 +101,34 @@ export default function Header({
     logout();
   };
 
-  return (
-    <header className="h-16 flex items-center justify-between px-5 bg-white border-b border-gray-100/80 flex-shrink-0 shadow-[0_1px_3px_0_rgb(0,0,0,0.04)]">
-      {/* ── Left: page title ── */}
-      <div className="flex items-center gap-3 min-w-0">
-        <div className="min-w-0">
-          <h1 className="text-[15px] font-semibold text-gray-900 leading-tight tracking-tight truncate">
-            {title}
-          </h1>
-          <p className="text-[11px] text-gray-400 leading-tight mt-0.5 truncate hidden sm:block">
-            {subtitle}
-          </p>
-        </div>
-      </div>
+  const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
 
-      {/* ── Centre: search button ── */}
-      <div
-        onClick={() => setSearchOpen(true)}
-        className="hidden md:flex items-center gap-2.5 bg-gray-50 hover:bg-slate-100/80 border border-gray-200 rounded-xl px-3.5 py-2 w-72 xl:w-96 cursor-pointer hover:border-[#1e3a7a]/40 hover:shadow-[0_0_0_3px_rgba(30,58,122,0.06)] transition-all duration-150 mx-6 select-none"
-        role="button"
-        tabIndex={0}
-        aria-label="Open search command palette"
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' || e.key === ' ') {
-            e.preventDefault();
-            setSearchOpen(true);
-          }
-        }}
+  return (
+    <header className="flex h-16 shrink-0 items-center gap-3 border-b border-gray-200 bg-white px-4 sm:px-6">
+      {/* ── Left: mobile menu + breadcrumb ── */}
+      <button
+        onClick={onOpenMobileNav}
+        className="btn btn-ghost btn-icon -ml-1 lg:hidden"
+        aria-label="Open navigation"
       >
-        <Search size={14} className="text-gray-400 flex-shrink-0" />
-        <span className="flex-1 text-sm text-gray-400 truncate">Search anything...</span>
-        <div className="flex items-center gap-0.5 text-gray-400 bg-white px-1.5 py-0.5 rounded-md border border-gray-200 shadow-2xs flex-shrink-0">
-          <Command size={10} />
-          <span className="text-[10px] font-semibold">K</span>
-        </div>
-      </div>
+        <Menu size={20} />
+      </button>
+      <nav aria-label="Breadcrumb" className="min-w-0 flex-1">
+        <ol className="flex min-w-0 items-center gap-1.5 text-sm">
+          <li className="hidden shrink-0 text-gray-500 sm:block">Workspace</li>
+          {crumbs.map((c, i) => (
+            <li key={c} className="flex min-w-0 items-center gap-1.5">
+              <ChevronRight size={14} className={`shrink-0 text-gray-300 ${i === 0 ? 'hidden sm:block' : ''}`} aria-hidden />
+              <span
+                className={`truncate ${i === crumbs.length - 1 ? 'font-medium text-gray-900' : 'text-gray-500'}`}
+                aria-current={i === crumbs.length - 1 ? 'page' : undefined}
+              >
+                {c}
+              </span>
+            </li>
+          ))}
+        </ol>
+      </nav>
 
       {/* Command Palette Modal */}
       <CommandPalette
@@ -142,21 +137,38 @@ export default function Header({
         onNavigate={(p) => onNavigate?.(p)}
       />
 
-      {/* ── Right: actions + user ── */}
-      <div className="flex items-center gap-1.5">
-
+      {/* ── Right: search, notifications, user ── */}
+      <div className="flex shrink-0 items-center gap-1 sm:gap-2">
+        <button
+          onClick={() => setSearchOpen(true)}
+          className="hidden h-9 w-64 items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 text-left transition-colors hover:border-gray-300 hover:bg-white md:flex xl:w-80"
+          aria-label="Open search command palette"
+        >
+          <Search size={15} className="shrink-0 text-gray-400" />
+          <span className="flex-1 truncate text-sm text-gray-400">Search anything…</span>
+          <kbd className="flex shrink-0 items-center gap-0.5 rounded border border-gray-200 bg-white px-1.5 py-0.5 font-sans text-[11px] font-medium text-gray-500">
+            {isMac ? <Command size={10} /> : 'Ctrl'} K
+          </kbd>
+        </button>
+        <button
+          onClick={() => setSearchOpen(true)}
+          className="btn btn-ghost btn-icon md:hidden"
+          aria-label="Search"
+        >
+          <Search size={18} />
+        </button>
 
         {/* Notifications */}
-        <button className="relative w-9 h-9 flex items-center justify-center rounded-xl text-slate-400 hover:text-[#1e3a7a] hover:bg-slate-100 border border-transparent hover:border-slate-200/60 transition-all duration-150 cursor-pointer">
-          <Bell size={16} />
-          <span className="absolute top-2 right-2 w-2 h-2 bg-[#c9692a] rounded-full ring-2 ring-white" />
+        <button className="btn btn-ghost btn-icon relative" aria-label="Notifications">
+          <Bell size={18} />
+          <span className="absolute right-2 top-2 h-2 w-2 rounded-full bg-accent ring-2 ring-white" />
         </button>
 
         {/* User dropdown */}
-        <div className="relative ml-2" ref={dropRef}>
+        <div className="relative ml-1" ref={dropRef}>
           <button
             onClick={() => setOpen(!open)}
-            className="w-10 h-10 rounded-full bg-[#e9e7fd] hover:bg-[#dfe0fb] text-[#5b4fcf] font-semibold text-[14px] flex items-center justify-center cursor-pointer transition-all duration-150 focus:outline-none focus:ring-2 focus:ring-[#5b4fcf]/30 select-none shadow-xs"
+            className="w-9 h-9 rounded-full bg-primary-50 hover:bg-primary-100 border border-primary-100 text-primary font-semibold text-[13px] flex items-center justify-center transition-colors select-none"
             aria-label="User profile menu"
             aria-expanded={open}
           >
@@ -164,22 +176,22 @@ export default function Header({
           </button>
 
           {open && (
-            <div className="absolute right-0 mt-2 w-72 bg-white rounded-2xl shadow-2xl shadow-slate-900/10 border border-slate-200/70 p-1.5 z-50 animate-in fade-in slide-in-from-top-2 duration-150">
+            <div className="absolute right-0 mt-2 w-72 bg-white rounded-xl shadow-[var(--shadow-pop)] border border-gray-200 p-1.5 z-50">
               {/* User info header */}
-              <div className="px-3 py-3 rounded-xl bg-slate-50/80 border border-slate-100 flex items-center gap-3">
-                <div className="w-9 h-9 rounded-full bg-[#e9e7fd] text-[#5b4fcf] font-bold text-xs flex items-center justify-center flex-shrink-0 ring-2 ring-white shadow-xs">
+              <div className="px-3 py-3 rounded-xl bg-gray-50/80 border border-gray-100 flex items-center gap-3">
+                <div className="w-9 h-9 rounded-full bg-primary-50 text-primary font-semibold text-xs flex items-center justify-center flex-shrink-0 ring-2 ring-white shadow-xs">
                   {initials}
                 </div>
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center justify-between gap-1.5">
-                    <p className="text-[13.5px] font-semibold text-slate-900 leading-tight truncate">
+                    <p className="text-[13.5px] font-semibold text-gray-900 leading-tight truncate">
                       {displayName}
                     </p>
                     <span className={`inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider border ${roleBadge}`}>
                       {displayRole}
                     </span>
                   </div>
-                  <p className="text-[11.5px] font-normal text-slate-500 leading-tight truncate mt-1">
+                  <p className="text-[11.5px] font-normal text-gray-500 leading-tight truncate mt-1">
                     {displayEmail}
                   </p>
                 </div>
@@ -192,22 +204,22 @@ export default function Header({
                     setOpen(false);
                     onNavigate?.('settings');
                   }}
-                  className="w-full text-left px-3 py-2 text-[13.5px] font-medium text-slate-700 hover:text-slate-900 hover:bg-slate-100/80 rounded-lg flex items-center gap-3 cursor-pointer transition-colors"
+                  className="w-full text-left px-3 py-2 text-[13.5px] font-medium text-gray-700 hover:text-gray-900 hover:bg-gray-100/80 rounded-lg flex items-center gap-3 cursor-pointer transition-colors"
                 >
-                  <User size={16} className="text-slate-500 flex-shrink-0" />
+                  <User size={16} className="text-gray-500 flex-shrink-0" />
                   <span>View Profile</span>
                 </button>
 
                 <button
                   onClick={toggleDarkMode}
-                  className="w-full text-left px-3 py-2 text-[13.5px] font-medium text-slate-700 hover:text-slate-900 hover:bg-slate-100/80 rounded-lg flex items-center justify-between cursor-pointer transition-colors"
+                  className="w-full text-left px-3 py-2 text-[13.5px] font-medium text-gray-700 hover:text-gray-900 hover:bg-gray-100/80 rounded-lg flex items-center justify-between cursor-pointer transition-colors"
                 >
                   <div className="flex items-center gap-3">
-                    <Moon size={16} className="text-slate-500 flex-shrink-0" />
+                    <Moon size={16} className="text-gray-500 flex-shrink-0" />
                     <span>Dark Mode</span>
                   </div>
                   {darkMode && (
-                    <span className="text-[10px] font-semibold text-[#5b4fcf] bg-[#e9e7fd] px-2 py-0.5 rounded-full">
+                    <span className="text-[10px] font-semibold text-primary bg-primary-50 px-2 py-0.5 rounded-full">
                       ON
                     </span>
                   )}
@@ -218,15 +230,15 @@ export default function Header({
                     setOpen(false);
                     onNavigate?.('settings');
                   }}
-                  className="w-full text-left px-3 py-2 text-[13.5px] font-medium text-slate-700 hover:text-slate-900 hover:bg-slate-100/80 rounded-lg flex items-center gap-3 cursor-pointer transition-colors"
+                  className="w-full text-left px-3 py-2 text-[13.5px] font-medium text-gray-700 hover:text-gray-900 hover:bg-gray-100/80 rounded-lg flex items-center gap-3 cursor-pointer transition-colors"
                 >
-                  <SettingsIcon size={16} className="text-slate-500 flex-shrink-0" />
+                  <SettingsIcon size={16} className="text-gray-500 flex-shrink-0" />
                   <span>Settings</span>
                 </button>
               </div>
 
               {/* Menu items 2: Sign Out */}
-              <div className="pt-1 mt-0.5 border-t border-slate-100">
+              <div className="pt-1 mt-0.5 border-t border-gray-100">
                 <button
                   onClick={handleLogout}
                   className="w-full text-left px-3 py-2 text-[13.5px] font-medium text-rose-600 hover:bg-rose-50 rounded-lg flex items-center gap-3 cursor-pointer transition-colors"

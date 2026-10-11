@@ -21,8 +21,8 @@ import {
 import { listAgents, setAgentEnabled, type AgentInfo } from '@/api';
 
 const CATEGORY_META: Record<string, { label: string; tint: string; text: string }> = {
-  analysis:   { label: 'Analysis',   tint: 'bg-[#edf3fb]', text: 'text-[#1e3a7a]' },
-  artifacts:  { label: 'Artifacts',  tint: 'bg-[#fdf3eb]', text: 'text-[#8b3d14]' },
+  analysis:   { label: 'Analysis',   tint: 'bg-primary-50', text: 'text-primary' },
+  artifacts:  { label: 'Artifacts',  tint: 'bg-accent-50', text: 'text-[#8b3d14]' },
   operations: { label: 'Operations', tint: 'bg-emerald-50', text: 'text-emerald-700' },
 };
 
@@ -147,15 +147,19 @@ export default function AgentsPage() {
   }
 
   return (
-    <div className="flex h-full overflow-hidden bg-[#f4f6fa]">
+    <div className="flex flex-col xl:h-full xl:flex-row xl:overflow-hidden">
       {/* ─── Main pane ─────────────────────────────────────────── */}
-      <div className="flex-1 overflow-y-auto">
-        <div className="p-6 space-y-5">
+      <div className="min-w-0 flex-1 xl:overflow-y-auto">
+        <div className="page">
           {/* Header */}
-          <div className="flex flex-wrap items-start justify-between gap-4">
-            <div>
-              <h2 className="text-gray-800 text-lg font-bold">AI Agent Fleet</h2>
-              <p className="text-gray-500 text-xs mt-0.5">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex min-w-0 items-center gap-3">
+              <div className="hidden h-10 w-10 shrink-0 items-center justify-center rounded-[10px] border border-primary-100 bg-primary-50 text-primary sm:flex">
+                <Bot size={20} strokeWidth={1.75} />
+              </div>
+              <div className="min-w-0">
+              <h1 className="page-title">AI Agents</h1>
+              <p className="page-subtitle mt-0.5">
                 {loading ? (
                   'Loading agents…'
                 ) : (
@@ -171,33 +175,35 @@ export default function AgentsPage() {
                   </>
                 )}
               </p>
+              </div>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <button
                 onClick={() => bulkToggle(true)}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-semibold text-gray-700 hover:border-[#1e3a7a] hover:text-[#1e3a7a] transition-colors"
+                className="btn btn-secondary"
               >
-                <Play size={12} /> Enable all
+                <Play size={14} /> Enable all
               </button>
               <button
                 onClick={() => bulkToggle(false)}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-semibold text-gray-700 hover:border-[#c9692a] hover:text-[#c9692a] transition-colors"
+                className="btn btn-secondary"
               >
-                <Pause size={12} /> Disable all
+                <Pause size={14} /> Disable all
               </button>
               <button
                 onClick={load}
                 title="Refresh"
-                className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 bg-white text-gray-500 hover:text-[#1e3a7a] transition-colors"
+                aria-label="Refresh agents"
+                className="btn btn-secondary btn-icon"
               >
-                <RefreshCw size={13} />
+                <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
               </button>
             </div>
           </div>
 
           {/* Error banner */}
           {error && (
-            <div className="rounded-xl bg-rose-50 border border-rose-200 px-4 py-3 flex items-start gap-3">
+            <div className="rounded-[10px] bg-danger-bg border border-red-200 px-4 py-3 flex items-start gap-3" role="alert">
               <WifiOff size={14} className="mt-0.5 text-rose-500 flex-shrink-0" />
               <div className="text-xs leading-relaxed text-rose-700">
                 <strong>Backend unreachable.</strong> {error} — showing transient defaults (all
@@ -208,9 +214,9 @@ export default function AgentsPage() {
           )}
 
           {/* Info banner explaining behavior */}
-          <div className="rounded-xl bg-[#edf3fb] border border-[#1e3a7a]/10 px-4 py-3 flex items-start gap-3">
-            <Info size={14} className="mt-0.5 text-[#1e3a7a] flex-shrink-0" />
-            <div className="text-xs leading-relaxed text-[#1e3a7a]">
+          <div className="rounded-[10px] bg-primary-50 border border-primary-100 px-4 py-3 flex items-start gap-3">
+            <Info size={14} className="mt-0.5 text-primary flex-shrink-0" />
+            <div className="text-xs leading-relaxed text-primary">
               <strong>Two of ten agents are core</strong> (Project Analyzer and Application
               Discovery) — they run on every project and cannot be disabled. The remaining{' '}
               <strong>eight generation agents</strong> can be turned off individually; disabled
@@ -220,47 +226,48 @@ export default function AgentsPage() {
           </div>
 
           {/* Stats strip */}
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4 xl:grid-cols-2 2xl:grid-cols-4">
             {[
               { label: 'Active', value: totalEnabled, icon: Power, color: 'text-emerald-600', bg: 'bg-emerald-50' },
-              { label: 'Disabled', value: agents.length - totalEnabled, icon: PowerOff, color: 'text-[#c9692a]', bg: 'bg-[#fdf3eb]' },
-              { label: 'Total runs', value: totalRuns, icon: TrendingUp, color: 'text-[#1e3a7a]', bg: 'bg-[#edf3fb]' },
+              { label: 'Disabled', value: agents.length - totalEnabled, icon: PowerOff, color: 'text-accent-700', bg: 'bg-accent-50' },
+              { label: 'Total runs', value: totalRuns, icon: TrendingUp, color: 'text-primary', bg: 'bg-primary-50' },
               { label: 'Avg success', value: `${avgSuccess}%`, icon: CheckCircle2, color: 'text-emerald-600', bg: 'bg-emerald-50' },
             ].map((s) => (
-              <div key={s.label} className="bg-white rounded-2xl border border-gray-100 p-4">
-                <div className="flex items-center justify-between mb-2">
-                  <div className={`w-8 h-8 rounded-lg ${s.bg} flex items-center justify-center`}>
-                    <s.icon size={14} className={s.color} />
-                  </div>
+              <div key={s.label} className="card flex items-center gap-3.5 px-4 py-3.5">
+                <div className={`w-10 h-10 shrink-0 rounded-[10px] ${s.bg} flex items-center justify-center`}>
+                  <s.icon size={18} className={s.color} />
                 </div>
-                <p className="text-gray-800 text-lg font-bold leading-tight">{s.value}</p>
-                <p className="text-gray-400 text-[11px] uppercase tracking-wider font-semibold mt-0.5">{s.label}</p>
+                <div className="min-w-0">
+                  <p className="truncate text-[13px] text-gray-500">{s.label}</p>
+                  <p className="text-[22px] font-semibold leading-7 text-gray-900 tabular-nums">{s.value}</p>
+                </div>
               </div>
             ))}
           </div>
 
           {/* Toolbar */}
           <div className="flex flex-wrap items-center gap-2">
-            <div className="flex items-center gap-2 bg-white border border-gray-200 rounded-xl px-3 py-2 flex-1 min-w-[220px] max-w-md">
-              <Search size={13} className="text-gray-400 flex-shrink-0" />
+            <div className="flex h-9 items-center gap-2 bg-white border border-gray-200 rounded-lg px-3 flex-1 min-w-[220px] max-w-md focus-within:border-primary focus-within:ring-[3px] focus-within:ring-primary/10">
+              <Search size={15} className="text-gray-400 flex-shrink-0" />
               <input
                 type="text"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search agents by name or role..."
-                className="flex-1 bg-transparent text-xs text-gray-700 placeholder-gray-400 focus:outline-none"
+                placeholder="Search agents by name or role…"
+                aria-label="Search agents"
+                className="flex-1 bg-transparent text-sm text-gray-700 placeholder-gray-400 focus:outline-none"
               />
             </div>
-            <div className="flex items-center gap-1 rounded-xl border border-gray-200 bg-white p-1">
+            <div className="flex flex-wrap items-center gap-1 rounded-lg border border-gray-200 bg-white p-1">
               {(['all', 'active', 'disabled', 'analysis', 'artifacts', 'operations'] as const).map((f) => (
                 <button
                   key={f}
                   onClick={() => setFilter(f)}
                   className={[
-                    'px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-colors capitalize',
+                    'h-7 px-2.5 rounded-md text-[13px] font-medium transition-colors capitalize',
                     filter === f
-                      ? 'bg-[#1e3a7a] text-white shadow-sm'
-                      : 'text-gray-500 hover:text-[#1e3a7a]',
+                      ? 'bg-primary text-white shadow-sm'
+                      : 'text-gray-500 hover:text-primary',
                   ].join(' ')}
                 >
                   {f}
@@ -271,13 +278,13 @@ export default function AgentsPage() {
 
           {/* Agent grid */}
           {loading ? (
-            <div className="py-20 text-center text-gray-400 text-xs">Loading agent fleet…</div>
+            <div className="py-20 text-center text-gray-500 text-xs">Loading agent fleet…</div>
           ) : (
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
               {filteredAgents.map((agent) => {
                 const enabled = agent.enabled;
                 const successRate = agent.runs ? Math.round((agent.successes / agent.runs) * 100) : 100;
-                const cat = CATEGORY_META[agent.category] ?? { label: agent.category, tint: 'bg-slate-100', text: 'text-slate-600' };
+                const cat = CATEGORY_META[agent.category] ?? { label: agent.category, tint: 'bg-gray-100', text: 'text-gray-600' };
                 const isCore = coreIds.includes(agent.agent_id);
                 const isSelected = selectedId === agent.agent_id;
                 const isToggling = togglingId === agent.agent_id;
@@ -286,10 +293,10 @@ export default function AgentsPage() {
                     key={agent.agent_id}
                     onClick={() => setSelectedId(agent.agent_id)}
                     className={[
-                      'group relative bg-white rounded-2xl border p-5 cursor-pointer transition-all',
+                      'group relative bg-white rounded-xl border p-5 cursor-pointer transition-all',
                       isSelected
-                        ? 'border-[#c9692a] shadow-[0_8px_28px_-8px_rgba(201,105,42,0.35)]'
-                        : 'border-gray-100 hover:border-[#1e3a7a]/30 hover:shadow-md',
+                        ? 'border-accent shadow-[0_8px_28px_-8px_rgba(201,105,42,0.35)]'
+                        : 'border-gray-100 hover:border-primary/30 hover:shadow-md',
                       !enabled ? 'opacity-70' : '',
                     ].join(' ')}
                   >
@@ -298,7 +305,7 @@ export default function AgentsPage() {
                         className={[
                           'w-11 h-11 rounded-xl flex items-center justify-center flex-shrink-0',
                           enabled
-                            ? 'bg-gradient-to-br from-[#1e3a7a] to-[#24478f] text-white'
+                            ? 'bg-gradient-to-br from-primary to-primary-hover text-white'
                             : 'bg-gray-100 text-gray-400',
                         ].join(' ')}
                       >
@@ -306,12 +313,12 @@ export default function AgentsPage() {
                       </div>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 flex-wrap">
-                          <h3 className="text-sm font-bold text-gray-800 truncate">{agent.name}</h3>
-                          <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[9.5px] font-bold uppercase tracking-wider ${cat.tint} ${cat.text}`}>
+                          <h3 className="text-sm font-semibold text-gray-800 truncate">{agent.name}</h3>
+                          <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[9.5px] font-semibold uppercase tracking-wider ${cat.tint} ${cat.text}`}>
                             {cat.label}
                           </span>
                           {isCore && (
-                            <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[9.5px] font-bold uppercase tracking-wider bg-slate-100 text-slate-600">
+                            <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[9.5px] font-semibold uppercase tracking-wider bg-gray-100 text-gray-600">
                               Core
                             </span>
                           )}
@@ -355,18 +362,18 @@ export default function AgentsPage() {
                     <div className="mt-4 pt-4 border-t border-gray-100 grid grid-cols-3 gap-2 text-[10.5px]">
                       <div>
                         <p className="text-gray-400 uppercase tracking-wider font-semibold">Status</p>
-                        <p className={`mt-0.5 font-bold flex items-center gap-1 ${enabled ? 'text-emerald-600' : 'text-gray-400'}`}>
+                        <p className={`mt-0.5 font-semibold flex items-center gap-1 ${enabled ? 'text-emerald-600' : 'text-gray-400'}`}>
                           <CircleDot size={9} className={enabled ? 'animate-pulse' : ''} />
                           {enabled ? 'Live' : 'Disabled'}
                         </p>
                       </div>
                       <div>
                         <p className="text-gray-400 uppercase tracking-wider font-semibold">Last run</p>
-                        <p className="mt-0.5 font-bold text-gray-700">{timeAgo(agent.last_run_at)}</p>
+                        <p className="mt-0.5 font-semibold text-gray-700">{timeAgo(agent.last_run_at)}</p>
                       </div>
                       <div>
                         <p className="text-gray-400 uppercase tracking-wider font-semibold">Success</p>
-                        <p className={`mt-0.5 font-bold ${successRate >= 95 ? 'text-emerald-600' : successRate >= 85 ? 'text-[#c9692a]' : 'text-red-500'}`}>
+                        <p className={`mt-0.5 font-semibold ${successRate >= 95 ? 'text-emerald-600' : successRate >= 85 ? 'text-accent-700' : 'text-red-500'}`}>
                           {successRate}%
                         </p>
                       </div>
@@ -375,10 +382,10 @@ export default function AgentsPage() {
                 );
               })}
               {filteredAgents.length === 0 && (
-                <div className="col-span-full py-16 text-center text-gray-400 text-xs">
+                <div className="col-span-full py-16 text-center text-gray-500 text-xs">
                   No agents match your filter.{' '}
                   <button
-                    className="text-[#1e3a7a] font-semibold underline"
+                    className="text-primary font-semibold underline"
                     onClick={() => { setFilter('all'); setQuery(''); }}
                   >
                     Reset
@@ -391,7 +398,7 @@ export default function AgentsPage() {
       </div>
 
       {/* ─── Detail panel ─────────────────────────────────────── */}
-      <div className="w-96 border-l border-gray-100 flex flex-col flex-shrink-0 bg-white">
+      <div className="flex w-full shrink-0 flex-col border-t border-gray-200 bg-white xl:w-96 xl:border-l xl:border-t-0">
         {selected ? (
           <>
             {/* Selected agent header */}
@@ -401,14 +408,14 @@ export default function AgentsPage() {
                   className={[
                     'w-11 h-11 rounded-xl flex items-center justify-center flex-shrink-0',
                     selected.enabled
-                      ? 'bg-gradient-to-br from-[#1e3a7a] to-[#24478f] text-white'
+                      ? 'bg-gradient-to-br from-primary to-primary-hover text-white'
                       : 'bg-gray-100 text-gray-400',
                   ].join(' ')}
                 >
                   {(() => { const Icon = getAgentIcon(selected); return <Icon size={20} />; })()}
                 </div>
                 <div className="flex-1 min-w-0">
-                  <h3 className="text-gray-800 text-sm font-bold truncate">{selected.name}</h3>
+                  <h3 className="section-title truncate">{selected.name}</h3>
                   <span className="text-gray-400 text-[11px]">{selected.role}</span>
                 </div>
                 <button
@@ -417,7 +424,7 @@ export default function AgentsPage() {
                   className={[
                     'w-8 h-8 flex items-center justify-center rounded-lg transition-colors',
                     selected.optional
-                      ? 'bg-gray-50 hover:bg-[#fdf3eb] text-gray-500 hover:text-[#c9692a] cursor-pointer'
+                      ? 'bg-gray-50 hover:bg-accent-50 text-gray-500 hover:text-accent-700 cursor-pointer'
                       : 'bg-gray-50 text-gray-300 cursor-not-allowed',
                   ].join(' ')}
                   title={selected.optional ? 'Toggle agent' : 'Core agent — always on'}
@@ -438,7 +445,7 @@ export default function AgentsPage() {
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="text-gray-500">Category</span>
-                  <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[9.5px] font-bold uppercase tracking-wider ${CATEGORY_META[selected.category]?.tint ?? 'bg-slate-100'} ${CATEGORY_META[selected.category]?.text ?? 'text-slate-600'}`}>
+                  <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[9.5px] font-semibold uppercase tracking-wider ${CATEGORY_META[selected.category]?.tint ?? 'bg-gray-100'} ${CATEGORY_META[selected.category]?.text ?? 'text-gray-600'}`}>
                     {CATEGORY_META[selected.category]?.label ?? selected.category}
                   </span>
                 </div>
@@ -454,7 +461,7 @@ export default function AgentsPage() {
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="text-gray-500">Optional</span>
-                  <span className={`font-semibold ${selected.optional ? 'text-emerald-600' : 'text-slate-500'}`}>
+                  <span className={`font-semibold ${selected.optional ? 'text-emerald-600' : 'text-gray-500'}`}>
                     {selected.optional ? 'Yes — can be disabled' : 'No — core agent'}
                   </span>
                 </div>
@@ -466,9 +473,9 @@ export default function AgentsPage() {
               <p className="text-gray-800 text-xs font-semibold mb-2">Recent activity</p>
               <ul className="space-y-2">
                 {[
-                  { label: 'Last run', time: timeAgo(selected.last_run_at), icon: Clock, tone: 'text-[#1e3a7a]' },
+                  { label: 'Last run', time: timeAgo(selected.last_run_at), icon: Clock, tone: 'text-primary' },
                   { label: 'Successful runs', time: String(selected.successes), icon: CheckCircle2, tone: 'text-emerald-500' },
-                  { label: 'Median runtime', time: `${selected.median_runtime_sec}s`, icon: Sparkles, tone: 'text-[#c9692a]' },
+                  { label: 'Median runtime', time: `${selected.median_runtime_sec}s`, icon: Sparkles, tone: 'text-accent-700' },
                   { label: 'State updated', time: timeAgo(selected.updated_at), icon: AlertTriangle, tone: 'text-gray-400' },
                 ].map((row) => {
                   const Icon = row.icon;
@@ -486,7 +493,7 @@ export default function AgentsPage() {
             </div>
 
             {/* Console */}
-            <div className="flex-1 flex flex-col min-h-0">
+            <div className="flex min-h-[320px] flex-1 flex-col xl:min-h-0">
               <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
                 <p className="text-gray-800 text-xs font-semibold">Agent Console</p>
                 <span className="text-[10px] text-gray-400">{selected.name}</span>
@@ -502,13 +509,14 @@ export default function AgentsPage() {
                 <ConsoleLine tone="muted">  › /explain output</ConsoleLine>
               </div>
               <div className="p-3 border-t border-gray-100">
-                <div className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 focus-within:border-[#1e3a7a]">
+                <div className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 focus-within:border-primary">
                   <TerminalSquare size={13} className="text-gray-400 flex-shrink-0" />
                   <input
                     type="text"
                     value={message}
                     onChange={(e) => setMessage(e.target.value)}
-                    placeholder={`Send a command to ${selected.name}...`}
+                    placeholder={`Send a command to ${selected.name}…`}
+                    aria-label="Agent command"
                     className="flex-1 bg-transparent text-gray-700 text-xs placeholder-gray-400 focus:outline-none"
                   />
                   <button
@@ -516,7 +524,7 @@ export default function AgentsPage() {
                     onClick={() => setMessage('')}
                     className={[
                       'flex-shrink-0',
-                      message.trim() ? 'text-[#c9692a] cursor-pointer' : 'text-gray-300 cursor-not-allowed',
+                      message.trim() ? 'text-accent-700 cursor-pointer' : 'text-gray-300 cursor-not-allowed',
                     ].join(' ')}
                   >
                     <Send size={13} />
@@ -530,7 +538,7 @@ export default function AgentsPage() {
           <div className="flex-1 flex items-center justify-center p-6 text-center">
             <div>
               <Bot size={24} className="mx-auto text-gray-300 mb-2" />
-              <p className="text-gray-400 text-xs">No agent selected.</p>
+              <p className="text-gray-500 text-xs">No agent selected.</p>
             </div>
           </div>
         )}
@@ -543,8 +551,8 @@ export default function AgentsPage() {
 
 function ConsoleLine({ tone, children }: { tone: 'system' | 'info' | 'success' | 'muted'; children: React.ReactNode }) {
   const cls = {
-    system: 'text-[#c9692a]',
-    info: 'text-[#1e3a7a]',
+    system: 'text-accent-700',
+    info: 'text-primary',
     success: 'text-emerald-600',
     muted: 'text-gray-400',
   }[tone];

@@ -94,36 +94,36 @@ export default function RegisterPage({ onSwitchToLogin }: RegisterPageProps) {
   }
 
   return (
-    <div className="flex h-screen w-full items-center justify-center bg-[#f4f6fa]">
+    <div className="flex h-screen w-full items-center justify-center bg-canvas">
       <div className="w-full max-w-sm">
         <div className="mb-8 text-center">
           <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center">
             <img src="/favicon.png" alt="Infra Genie logo" className="h-10 w-10 object-contain" />
           </div>
-          <h1 className="text-xl font-bold text-slate-900">Infra Genie</h1>
+          <h1 className="text-xl font-bold text-gray-900">Infra Genie</h1>
         </div>
 
         <div className="rounded-2xl bg-white p-8 shadow-sm">
-          <h2 className="mb-1 text-lg font-semibold text-slate-900">Create an account</h2>
-          <p className="mb-6 text-sm text-slate-500">Get started with Infra Genie.</p>
+          <h2 className="mb-1 text-lg font-semibold text-gray-900">Create an account</h2>
+          <p className="mb-6 text-sm text-gray-500">Get started with Infra Genie.</p>
 
           <form onSubmit={handleSubmit} className="space-y-4">
             {/* Username */}
             <div>
-              <label className="mb-1 block text-sm font-medium text-slate-700">Username</label>
+              <label className="mb-1 block text-sm font-medium text-gray-700">Username</label>
               <input
                 type="text"
                 required
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
-                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-[#1e2a5e] focus:ring-1 focus:ring-[#1e2a5e]"
+                className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-primary focus:ring-1 focus:ring-primary"
                 placeholder="vaibhav"
               />
             </div>
 
             {/* Email + OTP request */}
             <div>
-              <label className="mb-1 block text-sm font-medium text-slate-700">Email</label>
+              <label className="mb-1 block text-sm font-medium text-gray-700">Email</label>
               <div className="flex gap-2">
                 <input
                   type="email"
@@ -134,14 +134,14 @@ export default function RegisterPage({ onSwitchToLogin }: RegisterPageProps) {
                     setIsEmailVerified(false);
                     setOtpMessage(null);
                   }}
-                  className="min-w-0 flex-1 rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-[#1e2a5e] focus:ring-1 focus:ring-[#1e2a5e]"
+                  className="min-w-0 flex-1 rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-primary focus:ring-1 focus:ring-primary"
                   placeholder="you@company.com"
                 />
                 <button
                   type="button"
                   onClick={handleGetOtp}
                   disabled={isSendingOtp}
-                  className="shrink-0 rounded-lg border border-[#1e2a5e] px-3 py-2 text-sm font-semibold text-[#1e2a5e] transition hover:bg-[#edf1fb] disabled:opacity-60"
+                  className="shrink-0 rounded-lg border border-primary px-3 py-2 text-sm font-semibold text-primary transition hover:bg-primary-50 disabled:opacity-60"
                 >
                   {isSendingOtp ? 'Sending…' : 'Get OTP'}
                 </button>
@@ -151,7 +151,7 @@ export default function RegisterPage({ onSwitchToLogin }: RegisterPageProps) {
             {/* OTP verification */}
             {isOtpSent && (
               <div>
-                <label className="mb-1 block text-sm font-medium text-slate-700">Email OTP</label>
+                <label className="mb-1 block text-sm font-medium text-gray-700">Email OTP</label>
                 <div className="flex gap-2">
                   <input
                     type="text"
@@ -162,14 +162,14 @@ export default function RegisterPage({ onSwitchToLogin }: RegisterPageProps) {
                       setOtp(e.target.value.replace(/\D/g, '').slice(0, 6));
                       setIsEmailVerified(false);
                     }}
-                    className="min-w-0 flex-1 rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-[#1e2a5e] focus:ring-1 focus:ring-[#1e2a5e]"
+                    className="min-w-0 flex-1 rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-primary focus:ring-1 focus:ring-primary"
                     placeholder="Enter 6-digit code"
                   />
                   <button
                     type="button"
                     onClick={handleVerifyOtp}
                     disabled={isVerifyingOtp || isEmailVerified}
-                    className="shrink-0 rounded-lg bg-slate-900 px-3 py-2 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:opacity-60"
+                    className="shrink-0 rounded-lg bg-gray-900 px-3 py-2 text-sm font-semibold text-white transition hover:bg-gray-800 disabled:opacity-60"
                   >
                     {isVerifyingOtp ? 'Verifying…' : isEmailVerified ? '✓ Verified' : 'Verify'}
                   </button>
@@ -178,17 +178,17 @@ export default function RegisterPage({ onSwitchToLogin }: RegisterPageProps) {
             )}
 
             {otpMessage && (
-              <p className="rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-600">{otpMessage}</p>
+              <p className="rounded-lg bg-gray-50 px-3 py-2 text-sm text-gray-600">{otpMessage}</p>
             )}
 
             {/* Role — only Individual or Organization */}
             <div>
-              <label className="mb-1 block text-sm font-medium text-slate-700">Account type</label>
+              <label className="mb-1 block text-sm font-medium text-gray-700">Account type</label>
               <select
                 required
                 value={role}
                 onChange={(e) => setRole(e.target.value as SignupRole)}
-                className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none focus:border-[#1e2a5e] focus:ring-1 focus:ring-[#1e2a5e]"
+                className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-700 outline-none focus:border-primary focus:ring-1 focus:ring-primary"
               >
                 <option value="user">Individual</option>
                 <option value="organization">Organization</option>
@@ -198,17 +198,17 @@ export default function RegisterPage({ onSwitchToLogin }: RegisterPageProps) {
             {/* Org name — shown only for organization role */}
             {role === 'organization' && (
               <div>
-                <label className="mb-1 block text-sm font-medium text-slate-700">
-                  Organization name <span className="text-slate-400 font-normal">(optional)</span>
+                <label className="mb-1 block text-sm font-medium text-gray-700">
+                  Organization name <span className="text-gray-400 font-normal">(optional)</span>
                 </label>
                 <input
                   type="text"
                   value={orgName}
                   onChange={(e) => setOrgName(e.target.value)}
-                  className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-[#1e2a5e] focus:ring-1 focus:ring-[#1e2a5e]"
+                  className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-primary focus:ring-1 focus:ring-primary"
                   placeholder="Acme Corp"
                 />
-                <p className="mt-1 text-xs text-slate-400">
+                <p className="mt-1 text-xs text-gray-400">
                   Defaults to your username if left blank.
                 </p>
               </div>
@@ -216,14 +216,14 @@ export default function RegisterPage({ onSwitchToLogin }: RegisterPageProps) {
 
             {/* Password */}
             <div>
-              <label className="mb-1 block text-sm font-medium text-slate-700">Password</label>
+              <label className="mb-1 block text-sm font-medium text-gray-700">Password</label>
               <input
                 type="password"
                 required
                 minLength={8}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-[#1e2a5e] focus:ring-1 focus:ring-[#1e2a5e]"
+                className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-primary focus:ring-1 focus:ring-primary"
                 placeholder="At least 8 characters"
               />
             </div>
@@ -235,7 +235,7 @@ export default function RegisterPage({ onSwitchToLogin }: RegisterPageProps) {
             <button
               type="submit"
               disabled={isSubmitting || !isEmailVerified}
-              className="w-full rounded-lg bg-[#1e2a5e] py-2.5 text-sm font-semibold text-white transition hover:bg-[#16204a] disabled:opacity-60"
+              className="w-full rounded-lg bg-primary py-2.5 text-sm font-semibold text-white transition hover:bg-primary-hover disabled:opacity-60"
             >
               {isSubmitting
                 ? 'Creating account…'
@@ -245,9 +245,9 @@ export default function RegisterPage({ onSwitchToLogin }: RegisterPageProps) {
             </button>
           </form>
 
-          <p className="mt-6 text-center text-sm text-slate-500">
+          <p className="mt-6 text-center text-sm text-gray-500">
             Already have an account?{' '}
-            <button onClick={onSwitchToLogin} className="font-medium text-[#1e2a5e] hover:underline">
+            <button onClick={onSwitchToLogin} className="font-medium text-primary hover:underline">
               Sign in
             </button>
           </p>

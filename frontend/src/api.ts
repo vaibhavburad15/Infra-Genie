@@ -9,10 +9,21 @@ function getAuthHeaders(): Record<string, string> {
 }
 
 /** Thrown when the API returns 403 — usually means the user has no org membership. */
-export class ForbiddenError extends Error {
-  readonly status = 403;
-  constructor(message: string) {
+/** Error for a non-2xx API response. `code` carries a structured backend error code when present. */
+export class ApiError extends Error {
+  readonly status: number;
+  readonly code?: string;
+  constructor(message: string, status: number, code?: string) {
     super(message);
+    this.name = 'ApiError';
+    this.status = status;
+    this.code = code;
+  }
+}
+
+export class ForbiddenError extends ApiError {
+  constructor(message: string, code?: string) {
+    super(message, 403, code);
     this.name = 'ForbiddenError';
   }
 }
@@ -30,10 +41,12 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     const fallback = `API Error ${res.status}`;
     const contentType = res.headers.get('content-type') || '';
     let message = fallback;
+    let code: string | undefined;
 
     if (contentType.includes('application/json')) {
       const errorBody = await res.json().catch(() => null);
       const detail = errorBody?.detail;
+      if (typeof errorBody?.error_code === 'string') code = errorBody.error_code;
 
       if (typeof detail === 'string') {
         message = detail;
@@ -49,8 +62,8 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
       message = (await res.text().catch(() => '')) || fallback;
     }
 
-    if (res.status === 403) throw new ForbiddenError(message);
-    throw new Error(message);
+    if (res.status === 403) throw new ForbiddenError(message, code);
+    throw new ApiError(message, res.status, code);
   }
   return res.json();
 }
@@ -694,6 +707,15 @@ export async function connectAWSAccount(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });
+}
+
+/** Resume an unfinished (PENDING/FAILED) connection — same External ID, fresh CFN template. */
+export async function getAWSConnectionSetup(
+  connectionId: string,
+): Promise<CloudAccountConnectResponse> {
+  return request<CloudAccountConnectResponse>(
+    `/api/cloud/aws/${encodeURIComponent(connectionId)}/setup`,
+  );
 }
 
 /** Step 2 — provide the Role ARN and trigger STS verification. */

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { FileText, Calendar, Loader, AlertTriangle, RefreshCw } from 'lucide-react';
+import { FileText, Calendar, RefreshCw } from 'lucide-react';
+import { PageHeader, EmptyState, LoadingState, ErrorBanner } from '@/components/ui';
 import { listProjects, listReports, timeAgo, parseDate, type Project } from '@/api';
 
 interface Report {
@@ -13,10 +14,10 @@ interface Report {
 }
 
 const typeColors: Record<string, string> = {
-  monitoring:  'bg-[#edf3fb] text-[#1e3a7a] border-[#a8c1ea]',
-  security:    'bg-red-50 text-red-600 border-red-200',
-  cost:        'bg-emerald-50 text-emerald-600 border-emerald-200',
-  telemetry:   'bg-[#fdf3eb] text-[#c9692a] border-[#f0bc98]',
+  monitoring:  'badge-info',
+  security:    'badge-danger',
+  cost:        'badge-success',
+  telemetry:   'badge-warning',
 };
 
 export default function ReportsPage() {
@@ -56,78 +57,63 @@ export default function ReportsPage() {
   useEffect(() => { load(); }, []);
 
   return (
-    <div className="p-6 space-y-5 overflow-y-auto h-full bg-[#f4f6fa]">
-      <div className="bg-white rounded-2xl p-5 border border-gray-100">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-[#edf3fb] flex items-center justify-center">
-              <FileText size={18} className="text-[#1e3a7a]" />
-            </div>
-            <div>
-              <h3 className="text-gray-800 font-bold text-sm">Reports</h3>
-              <p className="text-gray-400 text-xs">Reports will be generated automatically once deployment execution is live.</p>
-            </div>
-          </div>
-          <button onClick={load} className="p-1.5 rounded-lg bg-gray-50 border border-gray-200 text-gray-400 hover:text-[#1e3a7a] cursor-pointer transition-colors">
-            <RefreshCw size={14} />
+    <div className="page">
+      <PageHeader
+        title="Reports"
+        description="Reports are generated automatically once deployment execution is live."
+        icon={FileText}
+        actions={
+          <button onClick={load} disabled={loading} className="btn btn-secondary btn-icon" title="Refresh" aria-label="Refresh">
+            <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
           </button>
-        </div>
-      </div>
+        }
+      />
 
-      {loading && (
-        <div className="flex items-center justify-center py-16">
-          <Loader size={20} className="text-[#c9692a] animate-spin mr-2" />
-          <span className="text-gray-400 text-sm">Loading reports…</span>
-        </div>
-      )}
+      {loading && <div className="card"><LoadingState label="Loading reports…" /></div>}
 
       {error && !loading && (
-        <div className="flex items-center gap-3 px-4 py-3 rounded-xl bg-red-50 border border-red-200">
-          <AlertTriangle size={16} className="text-red-500 flex-shrink-0" />
-          <p className="text-red-600 text-sm">{error}</p>
-          <button onClick={load} className="ml-auto text-xs text-red-500 hover:underline cursor-pointer">Retry</button>
-        </div>
+        <ErrorBanner
+          message={error}
+          action={<button onClick={load} className="btn btn-secondary btn-sm">Retry</button>}
+        />
       )}
 
       {!loading && !error && (
-        <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
-          <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
-            <h3 className="text-gray-800 font-semibold text-sm">All Reports</h3>
-            <span className="text-gray-400 text-xs">{reports.length} report{reports.length !== 1 ? 's' : ''}</span>
+        <section className="card overflow-hidden">
+          <div className="card-header">
+            <h2 className="section-title">All reports</h2>
+            <span className="text-xs text-gray-500">{reports.length} report{reports.length !== 1 ? 's' : ''}</span>
           </div>
 
           {reports.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-20 text-center">
-              <div className="w-14 h-14 rounded-2xl bg-[#fdf3eb] flex items-center justify-center mb-4">
-                <FileText size={24} className="text-[#c9692a]" />
-              </div>
-              <p className="text-gray-800 font-semibold text-sm">No reports yet</p>
-              <p className="text-gray-400 text-xs mt-1 max-w-xs">
-                Deployment execution is in progress — reports will be generated automatically once provisioning is live.
-              </p>
-            </div>
+            <EmptyState
+              icon={FileText}
+              title="No reports yet"
+              description="Deployment execution is in progress — reports will be generated automatically once provisioning is live."
+            />
           ) : (
-            <div className="divide-y divide-gray-50">
+            <div className="divide-y divide-gray-100">
               {reports.map((r) => (
                 <div key={r.id}>
-                  <div
-                    className="flex items-center gap-4 px-5 py-4 hover:bg-gray-50 transition-colors cursor-pointer"
+                  <button
+                    className="flex w-full items-center gap-4 px-5 py-3 text-left transition-colors hover:bg-gray-50"
                     onClick={() => setExpanded(expanded === r.id ? null : r.id)}
+                    aria-expanded={expanded === r.id}
                   >
-                    <div className="w-9 h-9 rounded-xl bg-[#fdf3eb] flex items-center justify-center flex-shrink-0">
-                      <FileText size={16} className="text-[#c9692a]" />
+                    <div className="w-9 h-9 rounded-lg bg-primary-50 flex items-center justify-center flex-shrink-0">
+                      <FileText size={16} className="text-primary" />
                     </div>
                     <div className="flex-1 min-w-0">
                       <p className="text-gray-800 text-sm font-medium">{projectMap[r.project_id] || r.project_id}</p>
-                      <p className="text-gray-400 text-xs font-mono">{r.id.slice(0, 12)}…</p>
+                      <p className="text-gray-500 text-xs font-mono">{r.id.slice(0, 12)}…</p>
                     </div>
-                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${typeColors[r.report_type] || 'bg-gray-100 text-gray-500 border-gray-200'}`}>
+                    <span className={`badge capitalize ${typeColors[r.report_type] || 'badge-neutral'}`}>
                       {r.report_type}
                     </span>
-                    <span className="text-gray-400 text-xs flex items-center gap-1 flex-shrink-0 hidden sm:flex">
-                      <Calendar size={11} />{timeAgo(r.created_at)}
+                    <span className="text-gray-500 text-xs items-center gap-1 flex-shrink-0 hidden sm:flex">
+                      <Calendar size={12} />{timeAgo(r.created_at)}
                     </span>
-                  </div>
+                  </button>
 
                   {expanded === r.id && (
                     <div className="px-5 pb-4 bg-gray-50 border-t border-gray-100">
@@ -154,7 +140,7 @@ export default function ReportsPage() {
               ))}
             </div>
           )}
-        </div>
+        </section>
       )}
     </div>
   );

@@ -13,6 +13,7 @@ import {
   uploadProjectFile, timeAgo, parseDate, ForbiddenError,
   type Project, type DeploymentPlan, type LogEntry, type ArchitectureGraph,
 } from '@/api';
+import { PageHeader, EmptyState, LoadingState, ErrorBanner } from '@/components/ui';
 import ArchitectureDiagram from '@/components/ArchitectureDiagram';
 import { validateZipContents } from '@/zipValidation';
 
@@ -35,7 +36,7 @@ function validateZipFile(file: File): string | null {
 
 const statusConfig: Record<string, { dot: string; text: string; bg: string; label: string }> = {
   pending:   { dot: 'bg-gray-400',                      text: 'text-gray-500',    bg: 'bg-gray-100',   label: 'Pending' },
-  analyzing: { dot: 'bg-[#c9692a] animate-pulse',       text: 'text-[#c9692a]',  bg: 'bg-[#fdf3eb]',  label: 'Analyzing' },
+  analyzing: { dot: 'bg-accent animate-pulse',       text: 'text-accent-700',  bg: 'bg-accent-50',  label: 'Analyzing' },
   ready:     { dot: 'bg-emerald-500',                   text: 'text-emerald-600', bg: 'bg-emerald-50', label: 'Ready' },
   deploying: { dot: 'bg-gray-400',                      text: 'text-gray-500',    bg: 'bg-gray-100',   label: 'Approved' },
   deployed:  { dot: 'bg-gray-400',                      text: 'text-gray-500',    bg: 'bg-gray-100',   label: 'Approved' },
@@ -66,7 +67,7 @@ const LOG_COLORS: Record<string, string> = {
   info:    'text-gray-300',
   success: 'text-emerald-400',
   error:   'text-red-400',
-  llm:     'text-[#c9692a]',   // streamed LLM tokens - copper "thoughts"
+  llm:     'text-accent-700',   // streamed LLM tokens - copper "thoughts"
 };
 
 // ── Live Terminal ─────────────────────────────────────────────────────────────
@@ -171,7 +172,7 @@ function AnalysisTerminal({ project, onDone }: { project: Project; onDone: () =>
         <div className="flex items-center gap-2 px-4 py-2 bg-[#12122a] border-b border-[#2a2a4a] text-xs font-mono">
           <Loader size={11} className="animate-spin text-[#60a5fa] shrink-0" />
           <span className="text-gray-500 shrink-0">Currently:</span>
-          <span className="text-[#c9692a] shrink-0 max-w-[140px] truncate">[{current.agent}]</span>
+          <span className="text-accent-700 shrink-0 max-w-[140px] truncate">[{current.agent}]</span>
           <span className="text-gray-200 truncate">{current.message}</span>
         </div>
       )}
@@ -190,7 +191,7 @@ function AnalysisTerminal({ project, onDone }: { project: Project; onDone: () =>
       <div className="flex-1 overflow-y-auto bg-[#0d0d1a] rounded-b-xl p-4 font-mono text-xs space-y-1 min-h-0">
         {logs.length === 0 && (
           <div className="flex items-center gap-2 text-gray-600">
-            <Loader size={11} className="animate-spin text-[#c9692a]" />
+            <Loader size={11} className="animate-spin text-primary" />
             <span>Waiting for agents to start…</span>
           </div>
         )}
@@ -202,8 +203,8 @@ function AnalysisTerminal({ project, onDone }: { project: Project; onDone: () =>
             // the user reads the model's reasoning as a flowing text block.
             return (
               <div key={i} className="flex gap-2 leading-snug">
-                <span className="text-[#c9692a]/70 shrink-0 select-none text-[10px]">▶</span>
-                <span className="text-[#c9692a]/90 flex-1 break-words text-[11px]">
+                <span className="text-accent-700/70 shrink-0 select-none text-[10px]">▶</span>
+                <span className="text-accent-700/90 flex-1 break-words text-[11px]">
                   {entry.message}
                 </span>
               </div>
@@ -215,7 +216,7 @@ function AnalysisTerminal({ project, onDone }: { project: Project; onDone: () =>
               <span className={`shrink-0 w-14 truncate ${LOG_COLORS[kind] ?? 'text-gray-400'} select-none`}>
                 {kind.toUpperCase()}
               </span>
-              <span className="text-[#c9692a] shrink-0 max-w-[140px] truncate">[{entry.agent}]</span>
+              <span className="text-accent-700 shrink-0 max-w-[140px] truncate">[{entry.agent}]</span>
               <span className={`flex-1 break-all ${LOG_COLORS[kind] ?? 'text-gray-300'}`}>
                 {entry.message}
               </span>
@@ -288,14 +289,14 @@ function ProjectDrawer({ project, onClose, onRefresh }: {
     if (!plan && project.status === 'pending') {
       return (
         <div className="flex flex-col items-center justify-center py-16 text-center">
-          <div className="w-14 h-14 rounded-2xl bg-[#edf3fb] flex items-center justify-center mb-4">
-            <Code size={24} className="text-[#1e3a7a]" />
+          <div className="w-14 h-14 rounded-xl bg-primary-50 flex items-center justify-center mb-4">
+            <Code size={24} className="text-primary" />
           </div>
           <p className="text-gray-800 text-sm font-semibold">Not analyzed yet</p>
-          <p className="text-gray-400 text-xs mt-1 mb-4">Click Analyze to run the AI agent pipeline.</p>
+          <p className="text-gray-500 text-xs mt-1 mb-4">Click Analyze to run the AI agent pipeline.</p>
           <button
             onClick={async () => { const u = await analyzeProject(project.id); onRefresh(u); }}
-            className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[#c9692a] text-white text-xs font-semibold hover:bg-[#b85820] cursor-pointer transition-colors"
+            className="btn btn-primary btn-sm"
           >
             <CheckCircle2 size={13} /> Run Analysis
           </button>
@@ -308,11 +309,11 @@ function ProjectDrawer({ project, onClose, onRefresh }: {
       const lastError = errorLogs[errorLogs.length - 1];
       return (
         <div className="flex flex-col items-center justify-center py-12 text-center px-4">
-          <div className="w-14 h-14 rounded-2xl bg-red-50 flex items-center justify-center mb-4">
+          <div className="w-14 h-14 rounded-xl bg-red-50 flex items-center justify-center mb-4">
             <AlertTriangle size={24} className="text-red-500" />
           </div>
           <p className="text-gray-800 text-sm font-semibold">Analysis failed — LLM unreachable</p>
-          <p className="text-gray-400 text-xs mt-1 max-w-sm">
+          <p className="text-gray-500 text-xs mt-1 max-w-sm">
             {lastError?.message || 'The LLM service could not be reached. Check that your backend worker is running and the model endpoint is configured correctly.'}
           </p>
           {errorLogs.length > 0 && (
@@ -324,7 +325,7 @@ function ProjectDrawer({ project, onClose, onRefresh }: {
           )}
           <button
             onClick={async () => { const u = await analyzeProject(project.id); onRefresh(u); }}
-            className="mt-4 flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[#c9692a] text-white text-xs font-semibold hover:bg-[#b85820] cursor-pointer transition-colors"
+            className="btn btn-primary btn-sm mt-4"
           >
             <RefreshCw size={13} /> Retry Analysis
           </button>
@@ -345,20 +346,20 @@ function ProjectDrawer({ project, onClose, onRefresh }: {
           {det && summary ? (
             <>
               {/* Project overview card */}
-              <div className="bg-gradient-to-r from-[#1e3a7a] to-[#24478f] rounded-2xl p-4 text-white">
+              <div className="bg-gradient-to-r from-primary to-primary-hover rounded-xl p-4 text-white">
                 <div className="flex items-center justify-between mb-2">
                   <p className="text-xs font-semibold uppercase tracking-wider opacity-70">Project Overview</p>
-                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-white/15 font-bold">
+                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-white/15 font-semibold">
                     {det.containerization.has_dockerfile ? '🐳 Docker' : 'no Docker'}
                     {det.ci_cd.present && ' · ⚙️ CI'}
                     {det.has_database_hint && ' · 💾 DB'}
                   </span>
                 </div>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                  <div><p className="text-[10px] opacity-70 uppercase">Language</p><p className="text-sm font-bold truncate">{summary.primary_language || '—'}</p></div>
-                  <div><p className="text-[10px] opacity-70 uppercase">Framework</p><p className="text-sm font-bold truncate">{summary.primary_framework || '—'}</p></div>
-                  <div><p className="text-[10px] opacity-70 uppercase">Pkg manager</p><p className="text-sm font-bold truncate">{summary.package_manager || '—'}</p></div>
-                  <div><p className="text-[10px] opacity-70 uppercase">LOC</p><p className="text-sm font-bold">{(summary.total_loc ?? 0).toLocaleString()}</p></div>
+                  <div><p className="text-[10px] opacity-70 uppercase">Language</p><p className="text-sm font-semibold truncate">{summary.primary_language || '—'}</p></div>
+                  <div><p className="text-[10px] opacity-70 uppercase">Framework</p><p className="text-sm font-semibold truncate">{summary.primary_framework || '—'}</p></div>
+                  <div><p className="text-[10px] opacity-70 uppercase">Pkg manager</p><p className="text-sm font-semibold truncate">{summary.package_manager || '—'}</p></div>
+                  <div><p className="text-[10px] opacity-70 uppercase">LOC</p><p className="text-sm font-semibold">{(summary.total_loc ?? 0).toLocaleString()}</p></div>
                 </div>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-3 text-xs">
                   <div><span className="opacity-70">Files</span> <b>{summary.total_files}</b></div>
@@ -369,14 +370,14 @@ function ProjectDrawer({ project, onClose, onRefresh }: {
               </div>
               {/* Languages breakdown */}
               {det.languages.length > 0 && (
-                <div className="bg-white border border-gray-100 rounded-2xl p-4">
-                  <p className="text-gray-400 text-[10px] font-semibold uppercase tracking-wider mb-2">Languages</p>
+                <div className="bg-white border border-gray-100 rounded-xl p-4">
+                  <p className="text-gray-500 text-[11px] font-semibold uppercase tracking-wider mb-2">Languages</p>
                   <div className="space-y-1.5">
                     {det.languages.slice(0, 8).map((l) => (
                       <div key={l.name} className="flex items-center gap-3 text-xs">
                         <span className="text-gray-700 w-32 truncate font-medium">{l.name}</span>
                         <div className="flex-1 h-2 rounded-full bg-gray-100 overflow-hidden">
-                          <div className="h-full bg-[#1e3a7a]" style={{ width: `${(l.loc / Math.max(summary.total_loc || 1, 1)) * 100}%` }} />
+                          <div className="h-full bg-primary" style={{ width: `${(l.loc / Math.max(summary.total_loc || 1, 1)) * 100}%` }} />
                         </div>
                         <span className="text-gray-500 w-24 text-right">{l.files} files · {l.loc.toLocaleString()} LOC</span>
                       </div>
@@ -395,8 +396,8 @@ function ProjectDrawer({ project, onClose, onRefresh }: {
               ].filter((g) => g.items && g.items.length > 0).map((g) => {
                 const Ico = g.icon;
                 return (
-                  <div key={g.title} className="bg-gray-50 rounded-2xl p-3">
-                    <p className="text-gray-400 text-[10px] uppercase font-semibold tracking-wider mb-2 flex items-center gap-1.5">
+                  <div key={g.title} className="bg-gray-50 rounded-xl p-3">
+                    <p className="text-gray-500 text-[11px] uppercase font-semibold tracking-wider mb-2 flex items-center gap-1.5">
                       <Ico size={11} />{g.title}
                     </p>
                     <div className="flex flex-wrap gap-1.5">
@@ -410,8 +411,8 @@ function ProjectDrawer({ project, onClose, onRefresh }: {
                 );
               })}
               {det.entry_points.length > 0 && (
-                <div className="bg-gray-50 rounded-2xl p-3">
-                  <p className="text-gray-400 text-[10px] uppercase font-semibold tracking-wider mb-2">Entry points</p>
+                <div className="bg-gray-50 rounded-xl p-3">
+                  <p className="text-gray-500 text-[11px] uppercase font-semibold tracking-wider mb-2">Entry points</p>
                   <div className="space-y-1">
                     {det.entry_points.slice(0, 8).map((ep, i) => (
                       <p key={i} className="text-[11px] text-gray-700 font-mono">→ {ep}</p>
@@ -420,8 +421,8 @@ function ProjectDrawer({ project, onClose, onRefresh }: {
                 </div>
               )}
               {det.environment_variables_hint.length > 0 && (
-                <div className="bg-gray-50 rounded-2xl p-3">
-                  <p className="text-gray-400 text-[10px] uppercase font-semibold tracking-wider mb-2">Environment variable hints</p>
+                <div className="bg-gray-50 rounded-xl p-3">
+                  <p className="text-gray-500 text-[11px] uppercase font-semibold tracking-wider mb-2">Environment variable hints</p>
                   <div className="flex flex-wrap gap-1.5">
                     {det.environment_variables_hint.slice(0, 16).map((k, i) => (
                       <span key={i} className="px-2 py-0.5 rounded text-[10px] font-mono bg-white border border-gray-200 text-gray-700">{k}</span>
@@ -431,8 +432,8 @@ function ProjectDrawer({ project, onClose, onRefresh }: {
               )}
               {/* AI commentary — only when notes are present */}
               {analysis?.notes && (
-                <div className="bg-[#fdf3eb] border border-[#f0bc98] rounded-2xl p-3">
-                  <p className="text-[#c9692a] text-[10px] uppercase font-semibold tracking-wider mb-1.5 flex items-center gap-1.5">
+                <div className="bg-accent-50 border border-accent-200 rounded-xl p-3">
+                  <p className="text-accent-700 text-[10px] uppercase font-semibold tracking-wider mb-1.5 flex items-center gap-1.5">
                     <Sparkles size={11} /> AI Commentary
                   </p>
                   <p className="text-gray-700 text-xs leading-relaxed">{analysis.notes}</p>
@@ -450,13 +451,13 @@ function ProjectDrawer({ project, onClose, onRefresh }: {
                 { label: 'Frontend', value: analysis.has_frontend ? 'Yes' : 'No' },
               ].map(({ label, value }) => value && (
                 <div key={label} className="bg-gray-50 rounded-xl p-3">
-                  <p className="text-gray-400 text-[10px] uppercase tracking-wider mb-1">{label}</p>
+                  <p className="text-gray-500 text-[11px] uppercase tracking-wider mb-1">{label}</p>
                   <p className="text-gray-800 text-sm font-semibold capitalize">{String(value)}</p>
                 </div>
               ))}
               {analysis.notes && (
-                <div className="col-span-2 bg-[#edf3fb] rounded-xl p-3">
-                  <p className="text-gray-400 text-[10px] uppercase tracking-wider mb-1">AI Notes</p>
+                <div className="col-span-2 bg-primary-50 rounded-xl p-3">
+                  <p className="text-gray-500 text-[11px] uppercase tracking-wider mb-1">AI Notes</p>
                   <p className="text-gray-700 text-xs leading-relaxed">{analysis.notes}</p>
                 </div>
               )}
@@ -476,15 +477,15 @@ function ProjectDrawer({ project, onClose, onRefresh }: {
         <div className="space-y-3">
           {apps.map((app, i) => (
             <div key={i} className="bg-gray-50 rounded-xl p-4 flex items-start gap-3">
-              <div className="w-9 h-9 rounded-lg bg-[#edf3fb] flex items-center justify-center flex-shrink-0">
-                <Layers size={16} className="text-[#1e3a7a]" />
+              <div className="w-9 h-9 rounded-lg bg-primary-50 flex items-center justify-center flex-shrink-0">
+                <Layers size={16} className="text-primary" />
               </div>
               <div>
                 <p className="text-gray-800 text-sm font-semibold">{app.name}</p>
                 <div className="flex items-center gap-2 mt-1 flex-wrap">
-                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-[#edf3fb] text-[#1e3a7a] font-medium">{app.type}</span>
+                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-primary-50 text-primary font-medium">{app.type}</span>
                   {app.tech && <span className="text-[10px] px-2 py-0.5 rounded-full bg-gray-100 text-gray-500">{app.tech}</span>}
-                  {app.port && <span className="text-gray-400 text-[10px]">:{app.port}</span>}
+                  {app.port && <span className="text-gray-500 text-[11px]">:{app.port}</span>}
                 </div>
               </div>
             </div>
@@ -559,11 +560,11 @@ function ProjectDrawer({ project, onClose, onRefresh }: {
         {/* Header */}
         <div className="flex items-start justify-between px-6 py-5 border-b border-gray-100 flex-shrink-0">
           <div className="flex items-center gap-3 min-w-0">
-            <div className="w-10 h-10 rounded-xl bg-[#edf3fb] flex items-center justify-center flex-shrink-0">
-              <Server size={18} className="text-[#1e3a7a]" />
+            <div className="w-10 h-10 rounded-xl bg-primary-50 flex items-center justify-center flex-shrink-0">
+              <Server size={18} className="text-primary" />
             </div>
             <div className="min-w-0">
-              <h2 className="text-gray-800 font-bold text-base truncate">{project.name}</h2>
+              <h2 className="text-gray-800 font-semibold text-base truncate">{project.name}</h2>
               <div className="flex items-center gap-2 mt-0.5 flex-wrap">
                 {(() => {
                   const sc = statusConfig[project.status] || statusConfig.pending;
@@ -574,8 +575,8 @@ function ProjectDrawer({ project, onClose, onRefresh }: {
                     </span>
                   );
                 })()}
-                <span className="text-gray-400 text-xs">{sourceTypeLabels[project.source_type] || project.source_type}</span>
-                <span className="text-gray-400 text-xs flex items-center gap-1"><Clock size={10} />{timeAgo(project.created_at)}</span>
+                <span className="text-gray-500 text-xs">{sourceTypeLabels[project.source_type] || project.source_type}</span>
+                <span className="text-gray-500 text-xs flex items-center gap-1"><Clock size={10} />{timeAgo(project.created_at)}</span>
               </div>
             </div>
           </div>
@@ -590,7 +591,7 @@ function ProjectDrawer({ project, onClose, onRefresh }: {
             {project.description && <p className="text-gray-600 text-xs leading-relaxed">{project.description}</p>}
             {project.github_url && (
               <a href={project.github_url} target="_blank" rel="noopener noreferrer"
-                className="inline-flex items-center gap-1 text-xs text-[#1e3a7a] hover:underline mt-1">
+                className="inline-flex items-center gap-1 text-xs text-primary hover:underline mt-1">
                 <ExternalLink size={10} />{project.github_url}
               </a>
             )}
@@ -606,7 +607,7 @@ function ProjectDrawer({ project, onClose, onRefresh }: {
                 onClick={() => setActiveTab(key)}
                 className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-colors cursor-pointer flex-shrink-0 ${
                   activeTab === key
-                    ? 'bg-[#1e3a7a] text-white'
+                    ? 'bg-primary text-white'
                     : 'text-gray-500 hover:bg-gray-100'
                 }`}
               >
@@ -634,7 +635,7 @@ function ProjectDrawer({ project, onClose, onRefresh }: {
               {project.status === 'pending' && (
                 <button
                   onClick={async () => { const u = await analyzeProject(project.id); onRefresh(u); }}
-                  className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[#1e3a7a] text-white text-xs font-semibold hover:bg-[#162d5f] cursor-pointer transition-colors"
+                  className="btn btn-primary btn-sm"
                 >
                   <CheckCircle2 size={13} /> Analyze
                 </button>
@@ -649,7 +650,7 @@ function ProjectDrawer({ project, onClose, onRefresh }: {
               )}
             </div>
             {(project.status === 'ready' || project.status === 'deployed') && (
-              <p className="text-gray-400 text-[10px]">Create and review a Terraform plan from the Deployments page.</p>
+              <p className="text-gray-500 text-[11px]">Create and review a Terraform plan from the Deployments page.</p>
             )}
           </div>
         </div>
@@ -813,14 +814,30 @@ export default function ProjectsPage() {
   };
 
   return (
-    <div className="p-6 space-y-5 overflow-y-auto h-full bg-[#f4f6fa]">
+    <div className="page">
+      <PageHeader
+        title="Projects"
+        description="Manage your applications and their deployment analysis."
+        icon={FolderGit2}
+        actions={
+          <>
+            <button onClick={load} disabled={loading} className="btn btn-secondary btn-icon" title="Refresh" aria-label="Refresh projects">
+              <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
+            </button>
+            <button onClick={() => setShowModal(true)} className="btn btn-primary">
+              <Plus size={16} /> New Project
+            </button>
+          </>
+        }
+      />
+
       {/* Toolbar */}
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <div className="flex items-center gap-2 flex-wrap">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-1 rounded-lg border border-gray-200 bg-white p-1" role="tablist" aria-label="Filter by status">
           {['all', 'pending', 'analyzing', 'ready', 'deployed', 'failed'].map((f) => (
-            <button key={f} onClick={() => setFilter(f)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-medium capitalize transition-colors cursor-pointer ${
-                filter === f ? 'bg-[#1e3a7a] text-white' : 'bg-white text-gray-500 border border-gray-200 hover:border-gray-300'
+            <button key={f} onClick={() => setFilter(f)} role="tab" aria-selected={filter === f}
+              className={`h-7 rounded-md px-2.5 text-[13px] font-medium capitalize transition-colors ${
+                filter === f ? 'bg-primary text-white' : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'
               }`}>
               {f}
             </button>
@@ -828,70 +845,49 @@ export default function ProjectsPage() {
         </div>
         <div className="flex items-center gap-2">
           <div className="relative">
-            <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-            <input type="text" placeholder="Search projects..." value={search}
+            <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+            <input type="text" placeholder="Search projects…" value={search} aria-label="Search projects"
               onChange={(e) => setSearch(e.target.value)}
-              className="bg-white border border-gray-200 rounded-lg pl-8 pr-3 py-1.5 text-xs text-gray-600 placeholder-gray-400 focus:outline-none focus:border-[#1e3a7a] w-48" />
+              className="input w-48 pl-9 sm:w-56" />
           </div>
-          <div className="flex rounded-lg border border-gray-200 overflow-hidden">
-            <button onClick={() => setView('grid')} className={`px-3 py-1.5 text-xs cursor-pointer ${view === 'grid' ? 'bg-[#1e3a7a] text-white' : 'bg-white text-gray-500'}`}>Grid</button>
-            <button onClick={() => setView('list')} className={`px-3 py-1.5 text-xs cursor-pointer ${view === 'list' ? 'bg-[#1e3a7a] text-white' : 'bg-white text-gray-500'}`}>List</button>
+          <div className="flex h-9 overflow-hidden rounded-lg border border-gray-200 bg-white p-0.5" role="group" aria-label="View">
+            <button onClick={() => setView('grid')} aria-pressed={view === 'grid'} className={`rounded-md px-3 text-[13px] font-medium ${view === 'grid' ? 'bg-gray-100 text-gray-900' : 'text-gray-500 hover:text-gray-800'}`}>Grid</button>
+            <button onClick={() => setView('list')} aria-pressed={view === 'list'} className={`rounded-md px-3 text-[13px] font-medium ${view === 'list' ? 'bg-gray-100 text-gray-900' : 'text-gray-500 hover:text-gray-800'}`}>List</button>
           </div>
-          <button onClick={load} className="p-1.5 rounded-lg bg-white border border-gray-200 text-gray-400 hover:text-[#1e3a7a] cursor-pointer transition-colors">
-            <RefreshCw size={14} />
-          </button>
-          <button onClick={() => setShowModal(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#c9692a] text-white text-xs font-semibold hover:bg-[#b85820] transition-colors cursor-pointer">
-            <Plus size={14} /> New Project
-          </button>
         </div>
       </div>
 
       {/* Loading */}
-      {loading && (
-        <div className="flex items-center justify-center py-20">
-          <Loader size={20} className="text-[#c9692a] animate-spin mr-2" />
-          <span className="text-gray-400 text-sm">Loading projects…</span>
-        </div>
-      )}
+      {loading && <div className="card"><LoadingState label="Loading projects…" /></div>}
 
       {/* Error */}
       {error && !loading && (
         error === '__no_org__' ? (
-          <div className="flex flex-col items-center justify-center py-20 text-center">
-            <div className="w-16 h-16 rounded-2xl bg-[#edf3fb] flex items-center justify-center mb-4">
-              <Users size={28} className="text-[#1e3a7a]" />
-            </div>
-            <p className="text-gray-800 font-semibold text-sm">No organization yet</p>
-            <p className="text-gray-500 text-xs mt-2 max-w-xs leading-relaxed">
-              You don't belong to any organization yet. Ask an org owner to invite you, or create an organization in Settings.
-            </p>
+          <div className="card">
+            <EmptyState
+              icon={Users}
+              title="No organization yet"
+              description="You don't belong to any organization yet. Ask an org owner to invite you, or create an organization in Settings."
+            />
           </div>
         ) : (
-          <div className="flex items-center gap-3 px-4 py-3 rounded-xl bg-red-50 border border-red-200">
-            <AlertTriangle size={16} className="text-red-500 flex-shrink-0" />
-            <p className="text-red-600 text-sm">{error}</p>
-            <button onClick={load} className="ml-auto text-xs text-red-500 hover:underline cursor-pointer">Retry</button>
-          </div>
+          <ErrorBanner message={error} action={<button onClick={load} className="btn btn-secondary btn-sm">Retry</button>} />
         )
       )}
 
       {/* Empty */}
       {!loading && !error && filtered.length === 0 && (
-        <div className="flex flex-col items-center justify-center py-20 text-center">
-          <div className="w-16 h-16 rounded-2xl bg-[#edf3fb] flex items-center justify-center mb-4">
-            <FolderGit2 size={28} className="text-[#1e3a7a]" />
-          </div>
-          <p className="text-gray-800 font-semibold text-sm">No projects found</p>
-          <p className="text-gray-400 text-xs mt-1 mb-4">
-            {search || filter !== 'all' ? 'Try a different filter or search.' : 'Create your first project to get started.'}
-          </p>
-          {!search && filter === 'all' && (
-            <button onClick={() => setShowModal(true)}
-              className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[#c9692a] text-white text-xs font-semibold hover:bg-[#b85820] transition-colors cursor-pointer">
-              <Plus size={14} /> New Project
-            </button>
-          )}
+        <div className="card">
+          <EmptyState
+            icon={FolderGit2}
+            title="No projects found"
+            description={search || filter !== 'all' ? 'Try a different filter or search.' : 'Create your first project to get started. Upload a ZIP or link a GitHub repository and Infra Genie will analyze it.'}
+            action={!search && filter === 'all' ? (
+              <button onClick={() => setShowModal(true)} className="btn btn-secondary">
+                <Plus size={16} /> New Project
+              </button>
+            ) : undefined}
+          />
         </div>
       )}
 
@@ -903,38 +899,40 @@ export default function ProjectsPage() {
             return (
               <div key={project.id}
                 onClick={() => openProject(project)}
-                className="bg-white rounded-2xl p-5 border border-gray-100 hover:shadow-md hover:border-[#c9692a]/30 transition-all group cursor-pointer relative">
+                className="card p-5 hover:border-gray-300 hover:shadow-sm transition-all group cursor-pointer relative flex flex-col">
                 <div className="flex items-start justify-between mb-3">
                   <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-xl bg-[#edf3fb] flex items-center justify-center">
-                      <Server size={18} className="text-[#1e3a7a]" />
+                    <div className="w-10 h-10 rounded-xl bg-primary-50 flex items-center justify-center">
+                      <Server size={18} className="text-primary" />
                     </div>
                     <div>
-                      <h3 className="text-gray-800 text-sm font-bold">{project.name}</h3>
-                      <p className="text-gray-400 text-xs">{sourceTypeLabels[project.source_type] || project.source_type}</p>
+                      <h3 className="section-title">{project.name}</h3>
+                      <p className="text-gray-500 text-xs">{sourceTypeLabels[project.source_type] || project.source_type}</p>
                     </div>
                   </div>
                   <div className="relative" onClick={(e) => e.stopPropagation()}>
                     <button
                       onClick={() => setMenuOpen(menuOpen === project.id ? null : project.id)}
-                      className="text-gray-300 hover:text-[#c9692a] cursor-pointer transition-colors">
-                      <MoreVertical size={15} />
+                      className="btn btn-ghost btn-sm btn-icon -mr-2 -mt-1"
+                      aria-label={`Actions for ${project.name}`}
+                      aria-expanded={menuOpen === project.id}>
+                      <MoreVertical size={16} />
                     </button>
                     {menuOpen === project.id && (
-                      <div className="absolute right-0 top-6 z-20 bg-white border border-gray-100 rounded-xl shadow-lg py-1 w-36">
+                      <div className="absolute right-0 top-8 z-20 bg-white border border-gray-200 rounded-[10px] shadow-[var(--shadow-pop)] py-1 w-40">
                         <button onClick={() => { openProject(project); setMenuOpen(null); }}
-                          className="w-full text-left px-4 py-2 text-xs text-gray-700 hover:bg-gray-50 cursor-pointer">View Details</button>
+                          className="w-full text-left px-3.5 py-2 text-[13px] text-gray-700 hover:bg-gray-50">View Details</button>
                         <button onClick={() => { analyzeProject(project.id).then(handleRefresh); setMenuOpen(null); }}
-                          className="w-full text-left px-4 py-2 text-xs text-gray-700 hover:bg-gray-50 cursor-pointer">Analyze</button>
+                          className="w-full text-left px-3.5 py-2 text-[13px] text-gray-700 hover:bg-gray-50">Analyze</button>
                         <button onClick={() => handleDelete(project.id)}
-                          className="w-full text-left px-4 py-2 text-xs text-red-600 hover:bg-red-50 cursor-pointer">Delete</button>
+                          className="w-full text-left px-3.5 py-2 text-[13px] text-red-700 hover:bg-red-50">Delete</button>
                       </div>
                     )}
                   </div>
                 </div>
 
-                <p className="text-gray-500 text-xs leading-relaxed mb-4 min-h-[32px]">
-                  {project.description || <span className="italic text-gray-300">No description</span>}
+                <p className="text-gray-500 text-[13px] leading-5 mb-4 line-clamp-2 flex-1">
+                  {project.description || <span className="italic text-gray-400">No description</span>}
                 </p>
 
                 <div className="flex items-center gap-2 mb-4 flex-wrap">
@@ -943,17 +941,17 @@ export default function ProjectsPage() {
                     {project.status === 'analyzing' && <Loader size={10} className="animate-spin ml-0.5" />}
                   </span>
                   {project.deployment_plan?.analysis?.language && (
-                    <span className="text-gray-400 text-xs px-2 py-0.5 rounded bg-gray-100">
+                    <span className="text-gray-500 text-xs px-2 py-0.5 rounded bg-gray-100">
                       {project.deployment_plan.analysis.language}
                     </span>
                   )}
                 </div>
 
                 <div className="flex items-center justify-between pt-3 border-t border-gray-100">
-                  <span className="text-gray-400 text-[10px] flex items-center gap-1">
+                  <span className="text-gray-500 text-[11px] flex items-center gap-1">
                     <Clock size={10} />{timeAgo(project.created_at)}
                   </span>
-                  <span className="text-[#c9692a] text-xs font-medium flex items-center gap-1 group-hover:gap-1.5 transition-all">
+                  <span className="text-primary text-xs font-medium flex items-center gap-1 group-hover:gap-1.5 transition-all">
                     View details <ChevronRight size={12} />
                   </span>
                 </div>
@@ -965,18 +963,18 @@ export default function ProjectsPage() {
 
       {/* List view */}
       {!loading && !error && filtered.length > 0 && view === 'list' && (
-        <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
-          <table className="w-full">
+        <div className="card overflow-x-auto">
+          <table className="w-full min-w-[560px]">
             <thead>
-              <tr className="border-b border-gray-100">
-                <th className="text-left text-gray-300 text-xs font-semibold uppercase tracking-wider px-4 py-3">Project</th>
-                <th className="text-left text-gray-300 text-xs font-semibold uppercase tracking-wider px-4 py-3">Status</th>
-                <th className="text-left text-gray-300 text-xs font-semibold uppercase tracking-wider px-4 py-3 hidden md:table-cell">Source</th>
-                <th className="text-left text-gray-300 text-xs font-semibold uppercase tracking-wider px-4 py-3 hidden lg:table-cell">Language</th>
-                <th className="text-left text-gray-300 text-xs font-semibold uppercase tracking-wider px-4 py-3">Created</th>
+              <tr className="border-b border-gray-200">
+                <th scope="col" className="text-left text-gray-500 text-xs font-medium px-4 py-2.5 bg-gray-50">Project</th>
+                <th scope="col" className="text-left text-gray-500 text-xs font-medium px-4 py-2.5 bg-gray-50">Status</th>
+                <th scope="col" className="text-left text-gray-500 text-xs font-medium px-4 py-2.5 bg-gray-50 hidden md:table-cell">Source</th>
+                <th scope="col" className="text-left text-gray-500 text-xs font-medium px-4 py-2.5 bg-gray-50 hidden lg:table-cell">Language</th>
+                <th scope="col" className="text-left text-gray-500 text-xs font-medium px-4 py-2.5 bg-gray-50">Created</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-gray-50">
+            <tbody className="divide-y divide-gray-100">
               {filtered.map((project) => {
                 const sc = statusConfig[project.status] || statusConfig.pending;
                 return (
@@ -984,12 +982,12 @@ export default function ProjectsPage() {
                     className="hover:bg-gray-50 transition-colors cursor-pointer">
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-3">
-                        <div className="w-8 h-8 rounded-lg bg-[#edf3fb] flex items-center justify-center">
-                          <Server size={14} className="text-[#1e3a7a]" />
+                        <div className="w-8 h-8 rounded-lg bg-primary-50 flex items-center justify-center">
+                          <Server size={14} className="text-primary" />
                         </div>
                         <div>
                           <p className="text-gray-800 text-sm font-medium">{project.name}</p>
-                          <p className="text-gray-400 text-xs truncate max-w-[200px]">{project.description || '—'}</p>
+                          <p className="text-gray-500 text-xs truncate max-w-[200px]">{project.description || '—'}</p>
                         </div>
                       </div>
                     </td>
@@ -1006,7 +1004,7 @@ export default function ProjectsPage() {
                       <span className="text-gray-500 text-xs">{project.deployment_plan?.analysis?.language || '—'}</span>
                     </td>
                     <td className="px-4 py-3">
-                      <span className="text-gray-400 text-xs flex items-center gap-1">
+                      <span className="text-gray-500 text-xs flex items-center gap-1">
                         <Clock size={11} />{timeAgo(project.created_at)}
                       </span>
                     </td>
@@ -1021,15 +1019,15 @@ export default function ProjectsPage() {
       {/* New Project Modal */}
       {showModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md mx-4 p-6">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-md mx-4 p-6">
             <div className="flex items-center justify-between mb-5">
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-[#edf3fb] flex items-center justify-center">
-                  <FolderGit2 size={18} className="text-[#1e3a7a]" />
+                <div className="w-10 h-10 rounded-xl bg-primary-50 flex items-center justify-center">
+                  <FolderGit2 size={18} className="text-primary" />
                 </div>
                 <div>
-                  <h2 className="text-gray-800 font-bold text-sm">New Project</h2>
-                  <p className="text-gray-400 text-xs">Add a project to InfraGenie</p>
+                  <h2 className="section-title">New Project</h2>
+                  <p className="text-gray-500 text-xs">Add a project to InfraGenie</p>
                 </div>
               </div>
               <button onClick={() => { setShowModal(false); setFormError(''); clearUploadSelection(); }} className="text-gray-400 hover:text-gray-600 cursor-pointer">
@@ -1041,13 +1039,13 @@ export default function ProjectsPage() {
                 <label className="text-gray-500 text-xs font-medium block mb-1.5">Project Name <span className="text-red-500">*</span></label>
                 <input type="text" placeholder="e.g. user-service" value={form.name}
                   onChange={(e) => { setForm({ ...form, name: e.target.value }); setFormError(''); }}
-                  className="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-700 placeholder-gray-400 focus:outline-none focus:border-[#1e3a7a]" />
+                  className="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-700 placeholder-gray-400 focus:outline-none focus:border-primary" />
               </div>
               <div>
                 <label className="text-gray-500 text-xs font-medium block mb-1.5">Description</label>
                 <textarea placeholder="What does this project do?" value={form.description}
                   onChange={(e) => setForm({ ...form, description: e.target.value })}
-                  rows={2} className="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-700 placeholder-gray-400 focus:outline-none focus:border-[#1e3a7a] resize-none" />
+                  rows={2} className="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-700 placeholder-gray-400 focus:outline-none focus:border-primary resize-none" />
               </div>
               <div>
                 <label className="text-gray-500 text-xs font-medium block mb-1.5">Source Type</label>
@@ -1057,7 +1055,7 @@ export default function ProjectsPage() {
                   setForm({ ...form, source_type: sourceType, github_url: '' });
                   setFormError('');
                 }}
-                  className="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-700 focus:outline-none focus:border-[#1e3a7a] cursor-pointer">
+                  className="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-700 focus:outline-none focus:border-primary cursor-pointer">
                   <option value="upload">File Upload</option>
                   <option value="github">GitHub</option>
                 </select>
@@ -1067,7 +1065,7 @@ export default function ProjectsPage() {
                   <label className="text-gray-500 text-xs font-medium block mb-1.5">GitHub URL <span className="text-red-500">*</span></label>
                   <input type="url" placeholder="https://github.com/org/repo" value={form.github_url}
                     onChange={(e) => { setForm({ ...form, github_url: e.target.value }); setFormError(''); }}
-                    className="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-700 placeholder-gray-400 focus:outline-none focus:border-[#1e3a7a]" />
+                    className="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-700 placeholder-gray-400 focus:outline-none focus:border-primary" />
                 </div>
               )}
               {form.source_type === 'upload' && (
@@ -1090,14 +1088,14 @@ export default function ProjectsPage() {
                       handleFilePicked(e.dataTransfer.files?.[0]);
                     }}
                     className={`w-full rounded-lg border-2 border-dashed px-3 py-5 text-center cursor-pointer transition-colors ${
-                      uploadDragActive ? 'border-[#1e3a7a] bg-[#edf3fb]' : 'border-gray-200 bg-gray-50 hover:border-gray-300'
+                      uploadDragActive ? 'border-primary bg-primary-50' : 'border-gray-200 bg-gray-50 hover:border-gray-300'
                     }`}
                   >
                     {uploadFile ? (
                       <div className="flex items-center justify-center gap-2 text-sm text-gray-700">
-                        <FileCode size={14} className="text-[#1e3a7a]" />
+                        <FileCode size={14} className="text-primary" />
                         <span className="font-medium truncate max-w-[220px]">{uploadFile.name}</span>
-                        <span className="text-gray-400 text-xs">({(uploadFile.size / (1024 * 1024)).toFixed(1)} MB)</span>
+                        <span className="text-gray-500 text-xs">({(uploadFile.size / (1024 * 1024)).toFixed(1)} MB)</span>
                         <button
                           type="button"
                           onClick={(e) => { e.stopPropagation(); clearUploadSelection(); }}
@@ -1109,16 +1107,16 @@ export default function ProjectsPage() {
                     ) : (
                       <>
                         <p className="text-gray-500 text-xs">Click or drag a <b>.zip</b> file here</p>
-                        <p className="text-gray-400 text-[10px] mt-1">Max {MAX_UPLOAD_MB}MB · .zip only</p>
+                        <p className="text-gray-500 text-[11px] mt-1">Max {MAX_UPLOAD_MB}MB · .zip only</p>
                       </>
                     )}
                   </div>
                   {uploadCheckStatus === 'checking' && (
-                    <p className="text-[#1e3a7a] text-[10px] mt-1.5 flex items-center gap-1">
+                    <p className="text-primary text-[10px] mt-1.5 flex items-center gap-1">
                       <Loader size={10} className="animate-spin" /> Checking ZIP contents…
                     </p>
                   )}
-                  <p className="text-gray-400 text-[10px] mt-1.5 leading-relaxed">
+                  <p className="text-gray-500 text-[11px] mt-1.5 leading-relaxed">
                     Exclude dependency folders such as node_modules and Python virtual environments. Keep your source files, manifests, and lockfiles.
                   </p>
                 </div>
@@ -1131,7 +1129,7 @@ export default function ProjectsPage() {
                 Cancel
               </button>
               <button onClick={handleCreate} disabled={creating || uploadCheckStatus === 'checking'}
-                className="px-5 py-2 rounded-lg bg-[#c9692a] text-white text-sm font-semibold hover:bg-[#b85820] cursor-pointer transition-colors disabled:opacity-60 disabled:cursor-not-allowed flex items-center gap-2">
+                className="btn btn-primary">
                 {creating && <Loader size={13} className="animate-spin" />}
                 {creating ? 'Creating…' : 'Create Project'}
               </button>

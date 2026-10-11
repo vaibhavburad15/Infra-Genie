@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { AuthProvider } from '@/context/AuthContext';
 import { useAuth } from '@/context/useAuth';
 import LoginPage from '@/pages/LoginPage';
@@ -29,19 +29,19 @@ interface SubPageState {
   projectName?: string;
 }
 
-const pageMeta: Record<Page, { title: string; subtitle: string }> = {
-  dashboard: { title: 'Overview', subtitle: 'Infrastructure overview and real-time status' },
-  projects: { title: 'Projects', subtitle: 'Manage your cloud projects and services' },
-  pipelines: { title: 'Pipelines', subtitle: 'CI/CD pipeline management and history' },
-  deployments: { title: 'Deployments', subtitle: 'Deployment pipelines and history' },
-  agents: { title: 'AI Agents', subtitle: 'Autonomous infrastructure management agents' },
-  monitoring: { title: 'Monitoring', subtitle: 'Real-time metrics, health, and alerting' },
-  security: { title: 'Security', subtitle: 'Vulnerability scanning and compliance' },
-  cost: { title: 'Cost Intelligence', subtitle: 'Cloud spend analysis and optimization' },
-  insights: { title: 'AI Insights', subtitle: 'AI-powered recommendations and optimization' },
-  reports: { title: 'Reports', subtitle: 'Generate and download infrastructure reports' },
-  settings: { title: 'Settings', subtitle: 'Manage your account and preferences' },
-  'cloud-accounts': { title: 'Cloud Accounts', subtitle: 'Connect and manage your AWS accounts' },
+const pageMeta: Record<Page, { title: string }> = {
+  dashboard: { title: 'Overview' },
+  projects: { title: 'Projects' },
+  pipelines: { title: 'Pipelines' },
+  deployments: { title: 'Deployments' },
+  agents: { title: 'AI Agents' },
+  monitoring: { title: 'Monitoring' },
+  security: { title: 'Security' },
+  cost: { title: 'Cost Intelligence' },
+  insights: { title: 'AI Insights' },
+  reports: { title: 'Reports' },
+  settings: { title: 'Settings' },
+  'cloud-accounts': { title: 'Cloud Accounts' },
 };
 
 function AuthGate() {
@@ -84,8 +84,8 @@ function AuthGate() {
 
   if (isLoading) {
     return (
-      <div className="flex h-screen w-full items-center justify-center bg-[#f4f6fa]">
-        <p className="text-sm text-slate-500">Loading…</p>
+      <div className="flex h-screen w-full items-center justify-center bg-canvas">
+        <p className="text-sm text-gray-500">Loading…</p>
       </div>
     );
   }
@@ -109,6 +109,8 @@ function Dashboard() {
   const [activePage, setActivePage] = useState<Page>('dashboard');
   const [subPage, setSubPage] = useState<SubPageState | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const mainRef = useRef<HTMLElement>(null);
 
   /** Navigate to the deployment review sub-page. */
   const openDeploymentReview = (deploymentId: string, projectName?: string) => {
@@ -123,11 +125,17 @@ function Dashboard() {
   const handleNavigate = (page: Page) => {
     setSubPage(null);
     setActivePage(page);
+    setMobileNavOpen(false);
   };
 
-  const meta = subPage
-    ? { title: 'Review Deployment', subtitle: 'Review the Terraform plan before approving' }
-    : pageMeta[activePage];
+  // Each page starts at the top of the shared scroll region.
+  useEffect(() => {
+    mainRef.current?.scrollTo({ top: 0 });
+  }, [activePage, subPage]);
+
+  const crumbs = subPage
+    ? [pageMeta.deployments.title, 'Review Deployment']
+    : [pageMeta[activePage].title];
 
   const renderPage = () => {
     // Sub-page takes priority over the normal page render.
@@ -164,17 +172,25 @@ function Dashboard() {
   };
 
   return (
-    <div className="flex h-screen w-full overflow-hidden bg-[#f4f6fa]">
-      <Sidebar activePage={activePage} onNavigate={handleNavigate} isOpen={sidebarOpen} onToggle={() => setSidebarOpen((v) => !v)} />
-      <div className="flex-1 flex flex-col min-w-0">
+    <div className="flex h-dvh w-full overflow-hidden bg-canvas text-gray-800">
+      <Sidebar
+        activePage={activePage}
+        onNavigate={handleNavigate}
+        isOpen={sidebarOpen}
+        onToggle={() => setSidebarOpen((v) => !v)}
+        mobileOpen={mobileNavOpen}
+        onMobileClose={() => setMobileNavOpen(false)}
+      />
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <Header
-          title={meta.title}
-          subtitle={meta.subtitle}
+          crumbs={crumbs}
           onNavigate={handleNavigate}
-          sidebarOpen={sidebarOpen}
-          onToggleSidebar={() => setSidebarOpen((v) => !v)}
+          onOpenMobileNav={() => setMobileNavOpen(true)}
         />
-        <main className="flex-1 overflow-hidden">{renderPage()}</main>
+        {/* The single, intentional scroll region for page content. */}
+        <main ref={mainRef} className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden">
+          {renderPage()}
+        </main>
       </div>
     </div>
   );

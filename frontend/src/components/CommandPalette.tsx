@@ -201,32 +201,32 @@ export default function CommandPalette({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs z-50 flex items-start justify-center pt-16 sm:pt-24 px-4 animate-in fade-in duration-150">
+    <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-xs z-50 flex items-start justify-center pt-16 sm:pt-24 px-4 animate-in fade-in duration-150">
       {/* Backdrop overlay */}
       <div className="fixed inset-0" onClick={onClose} />
 
       {/* Modal dialog */}
-      <div className="relative w-full max-w-xl bg-white rounded-2xl shadow-2xl border border-slate-200/90 overflow-hidden z-10 animate-in zoom-in-95 duration-150">
+      <div className="relative w-full max-w-xl bg-white rounded-xl shadow-2xl border border-gray-200/90 overflow-hidden z-10 animate-in zoom-in-95 duration-150">
         {/* Search input bar */}
-        <div className="flex items-center gap-3 px-4.5 py-3.5 border-b border-slate-100 bg-white">
-          <Search size={18} className="text-slate-400 flex-shrink-0" />
+        <div className="flex items-center gap-3 px-4.5 py-3.5 border-b border-gray-100 bg-white">
+          <Search size={18} className="text-gray-400 flex-shrink-0" />
           <input
             ref={inputRef}
             type="text"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Type a command or search pages..."
-            className="flex-1 bg-transparent text-sm text-slate-800 placeholder-slate-400 focus:outline-none"
+            className="flex-1 bg-transparent text-sm text-gray-800 placeholder-gray-400 focus:outline-none"
           />
           {query ? (
             <button
               onClick={() => setQuery('')}
-              className="p-1 text-slate-400 hover:text-slate-600 rounded-md hover:bg-slate-100"
+              className="p-1 text-gray-400 hover:text-gray-600 rounded-md hover:bg-gray-100"
             >
               <X size={15} />
             </button>
           ) : (
-            <kbd className="px-1.5 py-0.5 text-[10px] font-mono text-slate-400 bg-slate-100 rounded border border-slate-200">
+            <kbd className="px-1.5 py-0.5 text-[10px] font-mono text-gray-400 bg-gray-100 rounded border border-gray-200">
               ESC
             </kbd>
           )}
@@ -235,8 +235,8 @@ export default function CommandPalette({
         {/* Results list */}
         <div ref={listRef} className="max-h-80 overflow-y-auto p-2 space-y-1">
           {filteredItems.length === 0 ? (
-            <div className="py-10 text-center text-slate-400 text-sm">
-              No results found for &ldquo;<span className="text-slate-600 font-medium">{query}</span>&rdquo;
+            <div className="py-10 text-center text-gray-400 text-sm">
+              No results found for &ldquo;<span className="text-gray-600 font-medium">{query}</span>&rdquo;
             </div>
           ) : (
             filteredItems.map((item, idx) => {
@@ -252,8 +252,8 @@ export default function CommandPalette({
                     flex items-center justify-between px-3.5 py-2.5 rounded-xl cursor-pointer
                     transition-all duration-100
                     ${isSelected
-                      ? 'bg-[#1e3a7a] text-white shadow-sm shadow-[#1e3a7a]/20'
-                      : 'text-slate-700 hover:bg-slate-100/80'
+                      ? 'bg-primary text-white shadow-sm shadow-primary/20'
+                      : 'text-gray-700 hover:bg-gray-100/80'
                     }
                   `}
                 >
@@ -261,16 +261,16 @@ export default function CommandPalette({
                     <div
                       className={`
                         w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0
-                        ${isSelected ? 'bg-white/15 text-white' : 'bg-slate-100 text-slate-600'}
+                        ${isSelected ? 'bg-white/15 text-white' : 'bg-gray-100 text-gray-600'}
                       `}
                     >
                       <Icon size={16} />
                     </div>
                     <div className="min-w-0">
-                      <p className={`text-[13.5px] font-semibold leading-snug truncate ${isSelected ? 'text-white' : 'text-slate-900'}`}>
+                      <p className={`text-[13.5px] font-semibold leading-snug truncate ${isSelected ? 'text-white' : 'text-gray-900'}`}>
                         {item.title}
                       </p>
-                      <p className={`text-[11.5px] leading-snug truncate ${isSelected ? 'text-blue-100' : 'text-slate-400'}`}>
+                      <p className={`text-[11.5px] leading-snug truncate ${isSelected ? 'text-blue-100' : 'text-gray-400'}`}>
                         {item.subtitle}
                       </p>
                     </div>
@@ -278,11 +278,11 @@ export default function CommandPalette({
 
                   <div className="flex items-center gap-2 flex-shrink-0 ml-3">
                     {item.category === 'Quick Actions' && (
-                      <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${isSelected ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-500'}`}>
+                      <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${isSelected ? 'bg-white/20 text-white' : 'bg-gray-100 text-gray-500'}`}>
                         Action
                       </span>
                     )}
-                    <CornerDownLeft size={13} className={isSelected ? 'text-white/80' : 'text-slate-300'} />
+                    <CornerDownLeft size={13} className={isSelected ? 'text-white/80' : 'text-gray-300'} />
                   </div>
                 </div>
               );
@@ -291,13 +291,13 @@ export default function CommandPalette({
         </div>
 
         {/* Footer shortcuts info */}
-        <div className="px-4 py-2.5 bg-slate-50 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-400">
+        <div className="px-4 py-2.5 bg-gray-50 border-t border-gray-100 flex items-center justify-between text-[11px] text-gray-400">
           <div className="flex items-center gap-3">
             <span className="flex items-center gap-1">
-              <kbd className="px-1.5 py-0.5 text-[9.5px] font-mono text-slate-500 bg-white rounded border border-slate-200 shadow-2xs">↑↓</kbd> navigate
+              <kbd className="px-1.5 py-0.5 text-[9.5px] font-mono text-gray-500 bg-white rounded border border-gray-200 shadow-2xs">↑↓</kbd> navigate
             </span>
             <span className="flex items-center gap-1">
-              <kbd className="px-1.5 py-0.5 text-[9.5px] font-mono text-slate-500 bg-white rounded border border-slate-200 shadow-2xs">↵</kbd> select
+              <kbd className="px-1.5 py-0.5 text-[9.5px] font-mono text-gray-500 bg-white rounded border border-gray-200 shadow-2xs">↵</kbd> select
             </span>
           </div>
           <div className="flex items-center gap-1">

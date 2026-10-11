@@ -16,21 +16,25 @@
  *   component never receives or transmits any AWS credentials.
  */
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   CheckCircle2,
   XCircle,
   ChevronRight,
+  ChevronLeft,
   Download,
   ExternalLink,
   Copy,
   Loader2,
   AlertTriangle,
   RefreshCw,
+  X,
+  Cloud,
 } from 'lucide-react';
 import {
   connectAWSAccount,
   verifyAWSConnection,
+  disconnectAWSAccount,
   type CloudAccountConnectResponse,
   type CloudAccountOut,
 } from '@/api';
@@ -60,6 +64,11 @@ interface AWSConnectWizardProps {
   onConnected: (account: CloudAccountOut) => void;
   /** Called when the user cancels/closes the wizard. */
   onCancel: () => void;
+  /**
+   * Setup details of an existing PENDING/FAILED connection. When provided the
+   * wizard resumes at the CloudFormation step instead of creating a new record.
+   */
+  resume?: CloudAccountConnectResponse | null;
 }
 
 // ── Small helpers ─────────────────────────────────────────────────────────────
@@ -75,7 +84,8 @@ function CopyButton({ text }: { text: string }) {
     <button
       onClick={handleCopy}
       title="Copy to clipboard"
-      className="ml-2 p-1 rounded hover:bg-slate-100 text-slate-400 hover:text-slate-700 transition-colors"
+      className="btn btn-ghost btn-sm btn-icon ml-1 shrink-0"
+      aria-label={copied ? 'Copied' : 'Copy External ID'}
     >
       {copied ? <CheckCircle2 size={14} className="text-green-500" /> : <Copy size={14} />}
     </button>
@@ -87,12 +97,12 @@ function StepBadge({ step, current }: { step: number; current: number }) {
   const active = current === step;
   return (
     <div
-      className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold border-2 transition-all ${
+      className={`w-8 h-8 shrink-0 rounded-full flex items-center justify-center text-sm font-semibold border-2 transition-colors ${
         done
-          ? 'bg-green-500 border-green-500 text-white'
+          ? 'bg-success border-success text-white'
           : active
-          ? 'bg-[#1e3a7a] border-[#1e3a7a] text-white'
-          : 'bg-white border-slate-200 text-slate-400'
+          ? 'bg-primary border-primary text-white'
+          : 'bg-white border-gray-200 text-gray-400'
       }`}
     >
       {done ? <CheckCircle2 size={16} /> : step}
@@ -102,25 +112,42 @@ function StepBadge({ step, current }: { step: number; current: number }) {
 
 // ── Main component ────────────────────────────────────────────────────────────
 
-export default function AWSConnectWizard({ onConnected, onCancel }: AWSConnectWizardProps) {
-  const [step, setStep] = useState(0);
+export default function AWSConnectWizard({ onConnected, onCancel, resume = null }: AWSConnectWizardProps) {
+  const [step, setStep] = useState(resume ? 1 : 0);
 
   // Step 0 state
-  const [accountId, setAccountId] = useState('');
-  const [region, setRegion] = useState('ap-south-1');
+  const [accountId, setAccountId] = useState(resume?.account_id ?? '');
+  const [region, setRegion] = useState(resume?.region ?? 'ap-south-1');
   const [step0Error, setStep0Error] = useState('');
   const [step0Loading, setStep0Loading] = useState(false);
 
   // Step 1 state (populated after connect API call)
-  const [connectData, setConnectData] = useState<CloudAccountConnectResponse | null>(null);
+  const [connectData, setConnectData] = useState<CloudAccountConnectResponse | null>(resume);
 
   // Step 2 state
-  const [roleArn, setRoleArn] = useState('');
+  const [roleArn, setRoleArn] = useState(
+    resume ? `arn:aws:iam::${resume.account_id}:role/${resume.role_name}` : '',
+  );
   const [step2Error, setStep2Error] = useState('');
   const [step2Loading, setStep2Loading] = useState(false);
 
   // Step 3 state (populated after verify API call)
   const [connectedAccount, setConnectedAccount] = useState<CloudAccountOut | null>(null);
+
+  // A connection was already created (or resumed) and the user came back to
+  // step 0. If nothing changed we reuse it; otherwise it gets replaced.
+  const detailsChanged = connectData !== null &&
+    (connectData.account_id !== accountId.trim() || connectData.region !== region);
+
+  // Bring the "this will replace your connection" notice into view as soon as it
+  // appears — the body may be scrolled on short viewports.
+  const replaceNoticeRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (detailsChanged) replaceNoticeRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }, [detailsChanged]);
+
+  // Still working on the exact connection the wizard was resumed with.
+  const onResumedConnection = resume !== null && connectData?.connection_id === resume.connection_id && !detailsChanged;
 
   // ── Step 0 → Step 1: call /api/cloud/aws/connect ──────────────────────────
   const handleConnect = async () => {
@@ -129,9 +156,21 @@ export default function AWSConnectWizard({ onConnected, onCancel }: AWSConnectWi
       setStep0Error('AWS Account ID must be exactly 12 digits.');
       return;
     }
+    // Same account + region as the existing connection — keep its External ID.
+    if (connectData && !detailsChanged) {
+      setStep(1);
+      return;
+    }
     setStep0Loading(true);
     try {
+      const previous = connectData;
       const data = await connectAWSAccount({ account_id: accountId.trim(), region });
+      // Retire the superseded unfinished connection so it doesn't linger as a
+      // duplicate "Pending" account. Best effort: the new connection is valid
+      // even if this fails.
+      if (previous) {
+        await disconnectAWSAccount(previous.connection_id).catch(() => {});
+      }
       setConnectData(data);
       // Pre-fill the expected Role ARN for the user's convenience
       setRoleArn(`arn:aws:iam::${accountId.trim()}:role/${data.role_name}`);
@@ -201,208 +240,299 @@ export default function AWSConnectWizard({ onConnected, onCancel }: AWSConnectWi
 
   // ── Render ────────────────────────────────────────────────────────────────
 
+  const STEPS = ['Account Details', 'Create IAM Role', 'Verify'];
+
+  // Keep Tab / Shift+Tab cycling inside the dialog.
+  const trapFocus = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (e.key !== 'Tab') return;
+    const focusable = e.currentTarget.querySelectorAll<HTMLElement>(
+      'button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
+    );
+    if (focusable.length === 0) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+  };
+
+  // Footer actions for the current step — rendered in the pinned footer so they
+  // never scroll out of view.
+  let footer: React.ReactNode = null;
+  if (step === 0) {
+    footer = (
+      <>
+        <button onClick={onCancel} className="btn btn-secondary btn-lg sm:flex-1">
+          Cancel
+        </button>
+        <button
+          onClick={handleConnect}
+          disabled={step0Loading || accountId.length !== 12}
+          className="btn btn-primary btn-lg sm:flex-1"
+        >
+          {step0Loading ? (
+            <><Loader2 size={16} className="animate-spin" /> Generating…</>
+          ) : connectData && !detailsChanged ? (
+            <>Continue <ChevronRight size={16} /></>
+          ) : (
+            <>Connect AWS Account <ChevronRight size={16} /></>
+          )}
+        </button>
+      </>
+    );
+  } else if (step === 1 && connectData) {
+    footer = (
+      <>
+        <button onClick={() => setStep(0)} className="btn btn-secondary btn-lg">
+          <ChevronLeft size={16} /> Back
+        </button>
+        <button onClick={() => setStep(2)} className="btn btn-primary btn-lg sm:flex-1">
+          Stack created — enter Role ARN <ChevronRight size={16} />
+        </button>
+      </>
+    );
+  } else if (step === 2 && connectData) {
+    footer = (
+      <>
+        <button onClick={() => setStep(1)} className="btn btn-secondary btn-lg">
+          <ChevronLeft size={16} /> Back
+        </button>
+        <button
+          onClick={handleVerify}
+          disabled={step2Loading || !roleArn.trim()}
+          className="btn btn-primary btn-lg sm:flex-1"
+        >
+          {step2Loading ? (
+            <><Loader2 size={16} className="animate-spin" /> Verifying…</>
+          ) : (
+            <><RefreshCw size={16} /> Verify Connection</>
+          )}
+        </button>
+      </>
+    );
+  } else if (step === 3 && connectedAccount) {
+    footer = (
+      <button onClick={() => onConnected(connectedAccount)} className="btn btn-primary btn-lg sm:flex-1">
+        Done
+      </button>
+    );
+  }
+
+  const stepCard = 'rounded-[10px] border border-gray-200 bg-white p-4';
+  const stepNum = 'flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-semibold text-white';
+
   return (
-    <div className="bg-white rounded-2xl shadow-xl border border-slate-100 w-full max-w-2xl mx-auto overflow-hidden">
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="aws-connect-title"
+      aria-describedby="aws-connect-desc"
+      onKeyDown={trapFocus}
+      className="flex h-full w-full flex-col overflow-hidden rounded-none border-gray-200 bg-white shadow-[var(--shadow-pop)] sm:h-auto sm:max-h-[calc(100dvh-48px)] sm:w-[800px] sm:max-w-[calc(100vw-48px)] sm:rounded-2xl sm:border"
+    >
       {/* Header */}
-      <div className="bg-gradient-to-r from-[#1e3a7a] to-[#2d52a8] px-6 py-5">
-        <h2 className="text-white text-xl font-bold">Connect AWS Account</h2>
-        <p className="text-blue-200 text-sm mt-1">
-          Securely link your AWS account using cross-account IAM role assumption.
-        </p>
+      <div className="flex shrink-0 items-start justify-between gap-4 px-5 pb-4 pt-5 sm:px-6">
+        <div className="min-w-0">
+          <h2 id="aws-connect-title" className="text-xl font-semibold tracking-tight text-gray-900 sm:text-[22px] sm:leading-7">
+            {resume ? 'Continue AWS Setup' : 'Connect AWS Account'}
+          </h2>
+          <p id="aws-connect-desc" className="mt-1 text-sm text-gray-500">
+            {onResumedConnection
+              ? <>Finish connecting account <span className="font-mono text-gray-700">{resume?.account_id}</span>. Your External ID is unchanged.</>
+              : 'Securely link your AWS account using cross-account IAM role assumption.'}
+          </p>
+        </div>
+        <button onClick={onCancel} className="btn btn-ghost btn-icon -mr-2 -mt-1 shrink-0" aria-label="Close">
+          <X size={20} />
+        </button>
       </div>
 
-      {/* Step indicators */}
-      <div className="flex items-center gap-0 px-6 py-4 bg-slate-50 border-b border-slate-100">
-        {[
-          { n: 1, label: 'Account Details' },
-          { n: 2, label: 'Create IAM Role' },
-          { n: 3, label: 'Verify' },
-        ].map(({ n, label }, idx) => (
-          <div key={n} className="flex items-center">
-            <div className="flex items-center gap-2">
-              <StepBadge step={n} current={step + 1} />
+      {/* Stepper */}
+      <ol className="flex shrink-0 items-center gap-2 border-y border-gray-200 bg-gray-50 px-5 py-3 sm:gap-3 sm:px-6" aria-label="Progress">
+        {STEPS.map((label, idx) => {
+          const n = idx + 1;
+          const current = step + 1;
+          const done = current > n;
+          const active = current === n;
+          return (
+            <li key={label} className={`flex min-w-0 items-center gap-2 sm:gap-3 ${active ? 'flex-1 sm:flex-none' : ''}`} aria-current={active ? 'step' : undefined}>
+              <StepBadge step={n} current={current} />
               <span
-                className={`text-xs font-medium hidden sm:block ${
-                  step + 1 === n ? 'text-[#1e3a7a]' : step + 1 > n ? 'text-green-600' : 'text-slate-400'
+                className={`truncate text-sm font-medium ${active ? 'block' : 'hidden sm:block'} ${
+                  active ? 'text-primary' : done ? 'text-green-700' : 'text-gray-500'
                 }`}
               >
                 {label}
+                {done && <span className="sr-only"> (completed)</span>}
               </span>
-            </div>
-            {idx < 2 && <ChevronRight size={16} className="text-slate-300 mx-3" />}
-          </div>
-        ))}
-      </div>
+              {idx < STEPS.length - 1 && (
+                <span className="hidden h-px w-6 shrink-0 bg-gray-300 sm:block lg:w-10" aria-hidden />
+              )}
+            </li>
+          );
+        })}
+      </ol>
 
-      <div className="p-6">
+      {/* Body — the only scrolling region */}
+      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 py-5 sm:px-6">
         {/* ── STEP 0: Account Details ──────────────────────────────────────── */}
         {step === 0 && (
-          <div className="space-y-5">
-            <div>
-              <p className="text-slate-600 text-sm mb-4">
-                Enter your AWS Account ID and preferred region. Infra Genie will generate a
-                unique External ID and a CloudFormation template to create the cross-account
-                IAM role in your account.
-              </p>
-              <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 flex gap-2 text-sm text-amber-800 mb-5">
-                <AlertTriangle size={16} className="shrink-0 mt-0.5 text-amber-500" />
-                <span>
-                  You will <strong>never</strong> be asked for your AWS root credentials,
-                  access keys, or secret keys. Infra Genie uses a cross-account IAM role.
-                </span>
-              </div>
+          <div className="flex flex-col gap-4">
+            <p className="text-[15px] leading-6 text-gray-600">
+              Enter your AWS Account ID and preferred region. Infra Genie will generate a
+              unique External ID and a CloudFormation template to create the cross-account
+              IAM role in your account.
+            </p>
+            <div className="flex gap-2.5 rounded-[10px] border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-sm leading-5 text-amber-900">
+              <AlertTriangle size={16} className="mt-0.5 shrink-0 text-amber-600" />
+              <span>
+                You will <strong>never</strong> be asked for your AWS root credentials,
+                access keys, or secret keys. Infra Genie uses a cross-account IAM role.
+              </span>
             </div>
 
-            <div className="space-y-4">
+            <div className="flex flex-col gap-4">
               {/* Cloud Provider (AWS only for now) */}
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">
-                  Cloud Provider
-                </label>
-                <div className="flex items-center gap-2 px-3 py-2.5 border border-slate-200 rounded-xl bg-slate-50 text-slate-600 text-sm">
-                  <span className="text-lg">☁️</span>
-                  <span className="font-semibold">Amazon Web Services (AWS)</span>
+                <span id="aws-provider-label" className="label text-sm">Cloud Provider</span>
+                <div
+                  aria-labelledby="aws-provider-label"
+                  className="flex h-11 items-center gap-2.5 rounded-lg border border-gray-200 bg-gray-50 px-3.5 text-[15px] text-gray-700"
+                >
+                  <Cloud size={18} className="text-[#c2410c]" aria-hidden />
+                  <span className="font-medium">Amazon Web Services (AWS)</span>
                 </div>
               </div>
 
-              {/* AWS Account ID */}
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">
-                  AWS Account ID
-                </label>
-                <input
-                  type="text"
-                  value={accountId}
-                  onChange={(e) => {
-                    setAccountId(e.target.value.replace(/\D/g, '').slice(0, 12));
-                    setStep0Error('');
-                  }}
-                  placeholder="123456789012"
-                  maxLength={12}
-                  className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a7a]/30 focus:border-[#1e3a7a] transition-all font-mono"
-                />
-                <p className="text-xs text-slate-400 mt-1">
-                  12-digit number found in the top-right corner of your AWS console.
-                </p>
-              </div>
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                {/* AWS Account ID */}
+                <div>
+                  <label htmlFor="aws-account-id" className="label text-sm">
+                    AWS Account ID
+                  </label>
+                  <input
+                    id="aws-account-id"
+                    autoFocus
+                    inputMode="numeric"
+                    type="text"
+                    value={accountId}
+                    onChange={(e) => {
+                      setAccountId(e.target.value.replace(/\D/g, '').slice(0, 12));
+                      setStep0Error('');
+                    }}
+                    placeholder="123456789012"
+                    maxLength={12}
+                    aria-describedby="aws-account-id-help"
+                    aria-invalid={step0Error ? true : undefined}
+                    className="input input-lg font-mono"
+                  />
+                  <p id="aws-account-id-help" className="mt-1.5 text-xs text-gray-500">
+                    12-digit number found in the top-right corner of your AWS console.
+                  </p>
+                </div>
 
-              {/* Region */}
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">
-                  AWS Region
-                </label>
-                <select
-                  value={region}
-                  onChange={(e) => setRegion(e.target.value)}
-                  className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a7a]/30 focus:border-[#1e3a7a] bg-white transition-all"
-                >
-                  {AWS_REGIONS.map((r) => (
-                    <option key={r.value} value={r.value}>
-                      {r.label}
-                    </option>
-                  ))}
-                </select>
+                {/* Region */}
+                <div>
+                  <label htmlFor="aws-region" className="label text-sm">
+                    AWS Region
+                  </label>
+                  <select
+                    id="aws-region"
+                    value={region}
+                    onChange={(e) => setRegion(e.target.value)}
+                    className="input input-lg cursor-pointer"
+                  >
+                    {AWS_REGIONS.map((r) => (
+                      <option key={r.value} value={r.value}>
+                        {r.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
               </div>
             </div>
 
-            {step0Error && (
-              <div className="flex items-center gap-2 text-red-600 text-sm bg-red-50 border border-red-100 rounded-xl p-3">
-                <XCircle size={15} className="shrink-0" />
-                {step0Error}
+            {detailsChanged && (
+              <div ref={replaceNoticeRef} className="flex gap-2.5 rounded-[10px] border border-blue-200 bg-info-bg px-3.5 py-2.5 text-sm leading-5 text-info" role="status">
+                <AlertTriangle size={16} className="mt-0.5 shrink-0" />
+                <span>
+                  Changing the account ID or region generates a new External ID and
+                  CloudFormation template. The previous unfinished connection
+                  ({connectData?.account_id}, {connectData?.region}) will be removed — don't deploy its old template.
+                </span>
               </div>
             )}
 
-            <div className="flex gap-3 pt-2">
-              <button
-                onClick={onCancel}
-                className="flex-1 px-4 py-2.5 rounded-xl border border-slate-200 text-slate-600 text-sm font-medium hover:bg-slate-50 transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleConnect}
-                disabled={step0Loading || accountId.length !== 12}
-                className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-[#1e3a7a] text-white text-sm font-semibold hover:bg-[#2d52a8] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-              >
-                {step0Loading ? (
-                  <><Loader2 size={15} className="animate-spin" /> Generating…</>
-                ) : (
-                  <>Connect AWS Account <ChevronRight size={15} /></>
-                )}
-              </button>
-            </div>
+            {step0Error && (
+              <div className="flex items-center gap-2 rounded-[10px] border border-red-200 bg-danger-bg px-3.5 py-2.5 text-sm text-danger" role="alert">
+                <XCircle size={16} className="shrink-0" />
+                {step0Error}
+              </div>
+            )}
           </div>
         )}
 
         {/* ── STEP 1: CloudFormation Setup ─────────────────────────────────── */}
         {step === 1 && connectData && (
-          <div className="space-y-5">
-            <p className="text-slate-600 text-sm">
+          <div className="flex flex-col gap-4">
+            <p className="text-[15px] leading-6 text-gray-600">
               Download the CloudFormation template and deploy it in your AWS account{' '}
               <strong>{connectData.account_id}</strong>. It creates the{' '}
-              <code className="bg-slate-100 px-1.5 py-0.5 rounded text-xs font-mono">
+              <code className="rounded bg-gray-100 px-1.5 py-0.5 font-mono text-xs">
                 InfraGenieExecutionRole
               </code>{' '}
               IAM role — everything is pre-configured, no fields to fill in.
             </p>
 
             {/* External ID info */}
-            <div className="bg-slate-50 border border-slate-200 rounded-xl p-4">
-              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">
-                Your Unique External ID (already baked into the template)
+            <div className="rounded-[10px] border border-gray-200 bg-gray-50 px-4 py-3">
+              <p className="mb-1.5 text-xs font-medium text-gray-500">
+                Your unique External ID (already baked into the template)
               </p>
               <div className="flex items-center">
-                <code className="text-sm font-mono text-[#1e3a7a] break-all">
+                <code className="break-all font-mono text-sm text-primary">
                   {connectData.external_id}
                 </code>
                 <CopyButton text={connectData.external_id} />
               </div>
-              <p className="text-xs text-slate-400 mt-2">
+              <p className="mt-1.5 text-xs text-gray-500">
                 This ID is hardcoded in the template's trust policy. It ensures only
                 Infra Genie can assume the role.
               </p>
             </div>
 
             {/* Primary action — download first, then open console */}
-            <div className="space-y-3">
+            <ol className="flex flex-col gap-3">
               {/* Step A: Download */}
-              <div className="bg-white border-2 border-[#1e3a7a] rounded-xl p-4">
+              <li className={`${stepCard} border-primary-200 ring-1 ring-primary-100`}>
                 <div className="flex items-start gap-3">
-                  <div className="w-7 h-7 rounded-full bg-[#1e3a7a] text-white text-xs font-bold flex items-center justify-center shrink-0 mt-0.5">
-                    1
-                  </div>
-                  <div className="flex-1">
-                    <p className="text-sm font-semibold text-slate-700 mb-1">
+                  <span className={`${stepNum} bg-primary`}>1</span>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-semibold text-gray-800">
                       Download the CloudFormation template
                     </p>
-                    <p className="text-xs text-slate-500 mb-3">
+                    <p className="mb-3 mt-0.5 text-[13px] text-gray-500">
                       A JSON file with all values pre-filled — no editing required.
                     </p>
-                    <button
-                      onClick={handleDownloadTemplate}
-                      className="flex items-center gap-2 px-4 py-2.5 bg-[#1e3a7a] text-white rounded-xl text-sm font-semibold hover:bg-[#2d52a8] transition-colors"
-                    >
-                      <Download size={15} />
-                      Download infragenie-crossaccount-role.json
+                    <button onClick={handleDownloadTemplate} className="btn btn-primary max-w-full">
+                      <Download size={16} />
+                      <span className="truncate">Download infragenie-crossaccount-role.json</span>
                     </button>
                   </div>
                 </div>
-              </div>
+              </li>
 
               {/* Step B: Open CloudFormation */}
-              <div className="bg-white border border-slate-200 rounded-xl p-4">
+              <li className={stepCard}>
                 <div className="flex items-start gap-3">
-                  <div className="w-7 h-7 rounded-full bg-[#FF9900] text-white text-xs font-bold flex items-center justify-center shrink-0 mt-0.5">
-                    2
-                  </div>
-                  <div className="flex-1">
-                    <p className="text-sm font-semibold text-slate-700 mb-1">
+                  <span className={`${stepNum} bg-[#c2410c]`}>2</span>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-semibold text-gray-800">
                       Deploy in your AWS account
                     </p>
-                    <p className="text-xs text-slate-500 mb-3">
+                    <p className="mb-3 mt-0.5 text-[13px] leading-5 text-gray-500">
                       Open CloudFormation in <strong>{connectData.region}</strong>, upload the
                       downloaded file, give the stack a name (e.g.{' '}
-                      <code className="bg-slate-100 px-1 rounded font-mono">
+                      <code className="rounded bg-gray-100 px-1 font-mono">
                         InfraGenie-CrossAccount
                       </code>
                       ), then click through and hit <strong>Submit</strong>.
@@ -411,171 +541,135 @@ export default function AWSConnectWizard({ onConnected, onCancel }: AWSConnectWi
                       href={`https://${connectData.region}.console.aws.amazon.com/cloudformation/home?region=${connectData.region}#/stacks/create`}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="inline-flex items-center gap-2 px-4 py-2.5 bg-[#FF9900] text-white rounded-xl text-sm font-semibold hover:bg-[#e68a00] transition-colors"
+                      className="btn btn-secondary max-w-full"
                     >
-                      <ExternalLink size={15} />
-                      Open CloudFormation ({connectData.region})
+                      <ExternalLink size={16} />
+                      <span className="truncate">Open CloudFormation ({connectData.region})</span>
                     </a>
                   </div>
                 </div>
-              </div>
+              </li>
 
               {/* Step C: Copy RoleArn */}
-              <div className="bg-white border border-slate-200 rounded-xl p-4">
+              <li className={stepCard}>
                 <div className="flex items-start gap-3">
-                  <div className="w-7 h-7 rounded-full bg-slate-600 text-white text-xs font-bold flex items-center justify-center shrink-0 mt-0.5">
-                    3
-                  </div>
-                  <div className="flex-1">
-                    <p className="text-sm font-semibold text-slate-700 mb-1">
+                  <span className={`${stepNum} bg-gray-600`}>3</span>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-semibold text-gray-800">
                       After stack reaches CREATE_COMPLETE
                     </p>
-                    <p className="text-xs text-slate-500">
+                    <p className="mt-0.5 text-[13px] text-gray-500">
                       Go to your stack → <strong>Outputs</strong> tab → copy the{' '}
                       <strong>RoleArn</strong> value. You'll paste it on the next screen.
                     </p>
                   </div>
                 </div>
-              </div>
-            </div>
+              </li>
+            </ol>
 
             {/* Testing-only notice */}
-            <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-800">
-              <p className="font-semibold mb-1">⚠️ Testing / Prototype Notice</p>
+            <div className="flex gap-2.5 rounded-[10px] border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-[13px] leading-5 text-amber-900">
+              <AlertTriangle size={16} className="mt-0.5 shrink-0 text-amber-600" />
               <p>
+                <span className="font-semibold">Testing / prototype notice: </span>
                 The template attaches <strong>AdministratorAccess</strong> to the IAM role.
                 This is intentional for prototype testing only. Before production use,
                 this will be replaced with a least-privilege custom policy.
               </p>
-            </div>
-
-            <div className="flex gap-3 pt-2">
-              <button
-                onClick={() => setStep(0)}
-                className="px-4 py-2.5 rounded-xl border border-slate-200 text-slate-600 text-sm font-medium hover:bg-slate-50 transition-colors"
-              >
-                Back
-              </button>
-              <button
-                onClick={() => setStep(2)}
-                className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-[#1e3a7a] text-white text-sm font-semibold hover:bg-[#2d52a8] transition-colors"
-              >
-                Stack created — enter Role ARN <ChevronRight size={15} />
-              </button>
             </div>
           </div>
         )}
 
         {/* ── STEP 2: Verify Connection ────────────────────────────────────── */}
         {step === 2 && connectData && (
-          <div className="space-y-5">
-            <p className="text-slate-600 text-sm">
+          <div className="flex flex-col gap-5">
+            <p className="text-[15px] leading-6 text-gray-600">
               After the CloudFormation stack reaches <strong>CREATE_COMPLETE</strong>, copy
               the <strong>RoleArn</strong> from the stack Outputs tab and paste it below.
             </p>
 
-            <div className="space-y-4">
-              {/* Account confirmation */}
-              <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm">
-                <div className="flex items-center justify-between">
-                  <span className="text-slate-500">AWS Account</span>
-                  <span className="font-mono font-semibold text-slate-800">
-                    {connectData.account_id}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between mt-1">
-                  <span className="text-slate-500">Region</span>
-                  <span className="font-mono font-semibold text-slate-800">
-                    {connectData.region}
-                  </span>
-                </div>
-              </div>
-
-              {/* Role ARN input */}
+            {/* Account confirmation */}
+            <dl className="grid grid-cols-2 gap-3 rounded-[10px] border border-gray-200 bg-gray-50 px-4 py-3 text-sm">
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">
-                  Role ARN (from CloudFormation Outputs)
-                </label>
-                <input
-                  type="text"
-                  value={roleArn}
-                  onChange={(e) => { setRoleArn(e.target.value); setStep2Error(''); }}
-                  placeholder={`arn:aws:iam::${connectData.account_id}:role/InfraGenieExecutionRole`}
-                  className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a7a]/30 focus:border-[#1e3a7a] transition-all font-mono"
-                />
-                <p className="text-xs text-slate-400 mt-1">
-                  Found in: CloudFormation → Your Stack → Outputs → RoleArn
-                </p>
+                <dt className="text-xs text-gray-500">AWS Account</dt>
+                <dd className="mt-0.5 font-mono font-semibold text-gray-800">{connectData.account_id}</dd>
               </div>
+              <div>
+                <dt className="text-xs text-gray-500">Region</dt>
+                <dd className="mt-0.5 font-mono font-semibold text-gray-800">{connectData.region}</dd>
+              </div>
+            </dl>
+
+            {/* Role ARN input */}
+            <div>
+              <label htmlFor="aws-role-arn" className="label text-sm">
+                Role ARN (from CloudFormation Outputs)
+              </label>
+              <input
+                id="aws-role-arn"
+                type="text"
+                value={roleArn}
+                onChange={(e) => { setRoleArn(e.target.value); setStep2Error(''); }}
+                placeholder={`arn:aws:iam::${connectData.account_id}:role/InfraGenieExecutionRole`}
+                aria-describedby="aws-role-arn-help"
+                aria-invalid={step2Error ? true : undefined}
+                className="input input-lg font-mono text-sm"
+              />
+              <p id="aws-role-arn-help" className="mt-1.5 text-xs text-gray-500">
+                Found in: CloudFormation → Your Stack → Outputs → RoleArn
+              </p>
             </div>
 
             {step2Error && (
-              <div className="flex items-start gap-2 text-red-600 text-sm bg-red-50 border border-red-100 rounded-xl p-3">
-                <XCircle size={15} className="shrink-0 mt-0.5" />
+              <div className="flex items-start gap-2 rounded-[10px] border border-red-200 bg-danger-bg px-3.5 py-2.5 text-sm text-danger" role="alert">
+                <XCircle size={16} className="mt-0.5 shrink-0" />
                 <span>{step2Error}</span>
               </div>
             )}
-
-            <div className="flex gap-3 pt-2">
-              <button
-                onClick={() => setStep(1)}
-                className="px-4 py-2.5 rounded-xl border border-slate-200 text-slate-600 text-sm font-medium hover:bg-slate-50 transition-colors"
-              >
-                Back
-              </button>
-              <button
-                onClick={handleVerify}
-                disabled={step2Loading || !roleArn.trim()}
-                className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-[#1e3a7a] text-white text-sm font-semibold hover:bg-[#2d52a8] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-              >
-                {step2Loading ? (
-                  <><Loader2 size={15} className="animate-spin" /> Verifying…</>
-                ) : (
-                  <><RefreshCw size={15} /> Verify Connection</>
-                )}
-              </button>
-            </div>
           </div>
         )}
 
         {/* ── STEP 3: Connected ─────────────────────────────────────────────── */}
         {step === 3 && connectedAccount && (
-          <div className="space-y-5 text-center">
+          <div className="flex flex-col gap-5 text-center">
             <div className="flex flex-col items-center gap-3">
-              <div className="w-16 h-16 rounded-full bg-green-100 flex items-center justify-center">
-                <CheckCircle2 size={36} className="text-green-500" />
+              <div className="flex h-14 w-14 items-center justify-center rounded-full bg-success-bg">
+                <CheckCircle2 size={30} className="text-success" />
               </div>
               <div>
-                <h3 className="text-xl font-bold text-slate-800">AWS Account Connected!</h3>
-                <p className="text-slate-500 text-sm mt-1">
+                <h3 className="text-lg font-semibold text-gray-900">AWS Account Connected</h3>
+                <p className="mt-1 text-sm text-gray-500">
                   Infra Genie can now manage infrastructure in your AWS account.
                 </p>
               </div>
             </div>
 
-            <div className="bg-slate-50 border border-slate-100 rounded-xl p-4 text-left space-y-2 text-sm">
+            <dl className="space-y-2 rounded-[10px] border border-gray-200 bg-gray-50 px-4 py-3 text-left text-sm">
               {[
                 ['Account ID', connectedAccount.account_id],
                 ['Region',     connectedAccount.region],
                 ['Role',       'InfraGenieExecutionRole'],
-                ['Status',     '🟢 Connected'],
               ].map(([label, value]) => (
-                <div key={label} className="flex items-center justify-between">
-                  <span className="text-slate-500">{label}</span>
-                  <span className="font-semibold text-slate-800 font-mono">{value}</span>
+                <div key={label} className="flex items-center justify-between gap-3">
+                  <dt className="text-gray-500">{label}</dt>
+                  <dd className="truncate font-mono font-semibold text-gray-800">{value}</dd>
                 </div>
               ))}
-            </div>
-
-            <button
-              onClick={() => onConnected(connectedAccount)}
-              className="w-full px-4 py-2.5 rounded-xl bg-[#1e3a7a] text-white text-sm font-semibold hover:bg-[#2d52a8] transition-colors"
-            >
-              Done
-            </button>
+              <div className="flex items-center justify-between gap-3">
+                <dt className="text-gray-500">Status</dt>
+                <dd><span className="badge badge-success"><CheckCircle2 size={12} /> Connected</span></dd>
+              </div>
+            </dl>
           </div>
         )}
       </div>
+
+      {/* Footer — pinned, never scrolls away */}
+      {footer && (
+        <div className="flex shrink-0 flex-col-reverse gap-3 border-t border-gray-200 bg-white px-5 py-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:flex-row sm:px-6">
+          {footer}
+        </div>
+      )}
     </div>
   );
 }
