@@ -745,9 +745,279 @@ async def approve_deployment_v2(deployment_id: UUID, payload: ApproveDeployment,
     # ── STOP HERE ─────────────────────────────────────────────────────────────
     # terraform apply is NOT queued or executed.
     # The deployment remains in APPROVED status.
-    # The apply phase (APPLYING → DEPLOYED) is implemented separately.
+    # The apply phase is triggered separately via POST /api/deployments/{id}/apply.
 
     return deployment
+
+
+@app.post("/api/deployments/{deployment_id}/apply", response_model=DeploymentOut,
+          status_code=202, tags=["deployments"])
+async def apply_deployment(
+    deployment_id: UUID,
+    current_user: User = Depends(require_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Enqueue Terraform Apply for an explicitly approved deployment plan.
+
+    Security:
+    - User must own the deployment or be an org admin.
+    - Deployment must be in APPROVED status.
+    - Plan fingerprint and workspace must be present.
+    - AWS account must still be connected.
+    - Atomically transitions to APPLYING before returning; the worker
+      detects any non-APPROVED state and will skip gracefully.
+    - Idempotent: if already APPLYING or DEPLOYED, returns the current state.
+
+    The apply runs in the background worker — do not wait for it here.
+    Poll GET /api/deployments/{id} for status updates.
+    """
+    org = await resolve_current_org(current_user, db)
+
+    deployment = (await db.execute(select(Deployment).where(
+        Deployment.id == deployment_id,
+        Deployment.org_id == org.id,
+    ))).scalar_one_or_none()
+
+    if not deployment:
+        raise HTTPException(404, "Deployment not found")
+
+    # ── Ownership check ───────────────────────────────────────────────────────
+    if deployment.user_id and deployment.user_id != current_user.id:
+        membership = (await db.execute(select(Membership).where(
+            Membership.user_id == current_user.id,
+            Membership.org_id == org.id,
+        ))).scalar_one_or_none()
+        if not membership or membership.role not in (OrgRole.owner.value, OrgRole.admin.value):
+            raise HTTPException(
+                403,
+                "Only the deployment owner or an org admin can trigger this deployment.",
+            )
+
+    # ── Idempotency: already in an execution or terminal state ────────────────
+    terminal_ok = {DeploymentStatus.applying, DeploymentStatus.infrastructure_ready,
+                   DeploymentStatus.deploying_application, DeploymentStatus.verifying,
+                   DeploymentStatus.deployed}
+    if deployment.status in terminal_ok:
+        return deployment
+
+    # ── Guard: must be APPROVED ───────────────────────────────────────────────
+    if deployment.status != DeploymentStatus.approved:
+        raise HTTPException(
+            409,
+            f"Deployment is in '{deployment.status.value}' status. "
+            "Only an APPROVED deployment can be applied.",
+        )
+
+    # ── Validate required preconditions ───────────────────────────────────────
+    if not deployment.plan_fingerprint:
+        raise HTTPException(
+            409,
+            "No Terraform plan fingerprint found. Create and approve a new plan.",
+        )
+    if not deployment.terraform_workspace:
+        raise HTTPException(
+            409,
+            "No Terraform workspace found. Create and approve a new plan.",
+        )
+
+    account = (await db.execute(select(CloudAccount).where(
+        CloudAccount.id == deployment.cloud_account_id,
+    ))).scalar_one_or_none()
+    if not account:
+        raise HTTPException(404, "Connected AWS account not found.")
+    if account.status != CloudAccountStatus.connected:
+        raise HTTPException(
+            409,
+            "AWS account is no longer connected. Reconnect it before applying.",
+        )
+
+    # ── Validate strategy is still deployable ────────────────────────────────
+    if deployment.strategy_json:
+        from deployment_strategy import DeploymentStrategy, assert_strategy_deployable
+        try:
+            strategy = DeploymentStrategy.from_db_json(deployment.strategy_json)
+            assert_strategy_deployable(strategy)
+        except (ValueError, Exception) as strat_err:
+            raise HTTPException(
+                409,
+                f"Deployment strategy is no longer valid: {strat_err}. "
+                "Create a new plan.",
+            )
+
+    # ── Enqueue the background apply task ─────────────────────────────────────
+    try:
+        from tasks import task_run_deployment
+        get_queue().enqueue(
+            task_run_deployment,
+            str(deployment.id),
+            job_timeout=3600,
+        )
+    except Exception as exc:
+        raise HTTPException(
+            503,
+            "Could not queue the deployment apply task. "
+            "Verify that the worker and Redis are running. Detail: " + str(exc)[:500],
+        )
+
+    # ── Audit ─────────────────────────────────────────────────────────────────
+    db.add(AuditLog(
+        org_id=org.id,
+        actor_id=current_user.id,
+        action="deployment.apply.queued",
+        target_type="deployment",
+        target_id=str(deployment.id),
+        metadata_json={
+            "deployment_id": str(deployment.id),
+            "plan_fingerprint": (deployment.plan_fingerprint or "")[:16],
+            "region": deployment.region,
+        },
+    ))
+    await db.commit()
+    await db.refresh(deployment)
+    return deployment
+
+
+@app.get("/api/deployments/{deployment_id}/strategy", tags=["deployments"])
+async def get_deployment_strategy(
+    deployment_id: UUID,
+    current_user: User = Depends(require_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return the validated deployment strategy for a deployment.
+
+    Includes: components, targets, rationale, cost estimate, limitations.
+    Does NOT include AWS credentials or sensitive data.
+    """
+    org = await resolve_current_org(current_user, db)
+    deployment = (await db.execute(select(Deployment).where(
+        Deployment.id == deployment_id,
+        Deployment.org_id == org.id,
+    ))).scalar_one_or_none()
+    if not deployment:
+        raise HTTPException(404, "Deployment not found")
+
+    strategy = deployment.strategy_json or {}
+    return {
+        "deployment_id": str(deployment.id),
+        "status": deployment.status.value if deployment.status else None,
+        "strategy": strategy,
+        "strategy_digest": deployment.strategy_digest,
+    }
+
+
+@app.get("/api/deployments/{deployment_id}/results", tags=["deployments"])
+async def get_deployment_results(
+    deployment_id: UUID,
+    current_user: User = Depends(require_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return the full deployment execution results.
+
+    Includes:
+    - Overall status and per-stage statuses (infra, app, verification).
+    - Deployment outputs (endpoint URLs etc.) — sensitive values are redacted.
+    - Verification results.
+    - Duration and timestamps.
+    - Error message (never a raw stack trace).
+
+    Does NOT return AWS credentials, session tokens, or raw Terraform state.
+    """
+    org = await resolve_current_org(current_user, db)
+    deployment = (await db.execute(select(Deployment).where(
+        Deployment.id == deployment_id,
+        Deployment.org_id == org.id,
+    ))).scalar_one_or_none()
+    if not deployment:
+        raise HTTPException(404, "Deployment not found")
+
+    project = (await db.execute(select(Project).where(
+        Project.id == deployment.project_id,
+    ))).scalar_one_or_none()
+
+    account = None
+    if deployment.cloud_account_id:
+        account = (await db.execute(select(CloudAccount).where(
+            CloudAccount.id == deployment.cloud_account_id,
+        ))).scalar_one_or_none()
+
+    # Redact sensitive output keys before returning to browser
+    safe_outputs = _redact_outputs(deployment.deployment_outputs or {})
+
+    return {
+        "deployment_id": str(deployment.id),
+        "project_name": project.name if project else None,
+        "status": deployment.status.value if deployment.status else None,
+        "region": deployment.region,
+        "environment": deployment.environment,
+        # AWS account shown in masked form only
+        "account_id_masked": _mask_account(account.account_id if account else None),
+        # Per-stage statuses
+        "infra_status": deployment.infra_status,
+        "app_deploy_status": deployment.app_deploy_status,
+        "verification_status": deployment.verification_status,
+        "verification_results": deployment.verification_results,
+        # Outputs and endpoint
+        "outputs": safe_outputs,
+        "endpoint": _extract_endpoint(safe_outputs),
+        # Timing
+        "duration_seconds": deployment.duration_seconds,
+        "apply_started_at": (
+            deployment.apply_started_at.isoformat() + "Z"
+            if deployment.apply_started_at else None
+        ),
+        "completed_at": (
+            deployment.completed_at.isoformat() + "Z"
+            if deployment.completed_at else None
+        ),
+        # Error (user-facing, no stack trace)
+        "error_message": deployment.error_message,
+        # Plan summary for context
+        "plan_summary": deployment.plan_summary,
+    }
+
+
+def _redact_outputs(outputs: dict) -> dict:
+    """Remove or mask sensitive keys from Terraform outputs before browser delivery."""
+    sensitive_patterns = {
+        "password", "secret", "token", "key", "credentials",
+        "private", "cert", "pem", "dsn", "connection_string",
+    }
+    result = {}
+    for k, v in outputs.items():
+        k_lower = k.lower()
+        if any(pat in k_lower for pat in sensitive_patterns):
+            result[k] = "<redacted>"
+        elif isinstance(v, dict):
+            result[k] = _redact_outputs(v)
+        else:
+            result[k] = v
+    return result
+
+
+def _mask_account(account_id: Optional[str]) -> Optional[str]:
+    """Return a partially masked AWS account ID (show first 4 and last 4 digits)."""
+    if not account_id:
+        return None
+    s = str(account_id).replace("-", "")
+    if len(s) >= 8:
+        return s[:4] + "****" + s[-4:]
+    return "****"
+
+
+def _extract_endpoint(outputs: dict) -> Optional[str]:
+    """Find the primary application endpoint from deployment outputs."""
+    for key in ("endpoint", "cloudfront_url", "alb_dns", "website_url",
+                "instance_public_ip", "public_ip"):
+        val = outputs.get(key)
+        if val and val != "<redacted>":
+            return str(val)
+    # Check nested component outputs
+    for v in outputs.values():
+        if isinstance(v, dict):
+            ep = _extract_endpoint(v)
+            if ep:
+                return ep
+    return None
 
 
 @app.get("/projects/{project_id}/reports", response_model=List[ReportOut], tags=["reports"])

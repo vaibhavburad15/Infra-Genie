@@ -1,18 +1,4 @@
-"""
-InfraGenie — LLM Client
 
-Thin httpx wrapper around an OpenAI-compatible vLLM endpoint.
-All configuration (base URL, API key, model name) is read exclusively from
-the Settings singleton.
-
-Concurrency fix (carried forward from v2):
-  The LangGraph pipeline launches 8 specialist agents in parallel. On a slow
-  self-hosted vLLM those requests starve each other and blow the timeout —
-  UI shows "LLM is not working" even though the server is up. We now:
-   1. cap concurrent calls with a semaphore (settings.llm_max_concurrency);
-   2. use a configurable per-request timeout (settings.llm_timeout);
-   3. tell the timeout message apart from "unreachable".
-"""
 import httpx
 import json
 import asyncio

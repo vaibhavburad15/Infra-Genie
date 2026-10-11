@@ -1,49 +1,4 @@
-"""
-aws_connection.py — AWS cross-account connection services for InfraGenie.
 
-Architecture
-────────────
-Two service classes handle all AWS interaction:
-
-  AWSSTSService
-    Low-level wrapper around boto3 STS.  Handles AssumeRole and
-    GetCallerIdentity.  Never stores credentials — callers use the
-    returned session in-memory and discard it.
-
-  AWSConnectionService
-    Business logic layer:
-      • generate_external_id()          — crypto-random UUID v4
-      • generate_cloudformation_template() — parameterised CFN YAML/JSON
-      • validate_role_arn()             — structural + account-ID checks
-      • create_connection()             — DB record, status=PENDING
-      • verify_connection()             — AssumeRole → GetCallerIdentity
-                                          → EC2 DescribeRegions → CONNECTED
-      • list_connections()              — user-scoped, safe metadata only
-      • disconnect()                    — soft-delete (status=DISCONNECTED)
-
-TESTING / PROTOTYPE NOTE
-────────────────────────
-The CloudFormation template produced by generate_cloudformation_template()
-attaches the AWS managed policy AdministratorAccess to InfraGenieExecutionRole.
-
-THIS IS INTENTIONAL FOR THE PROTOTYPE / TESTING PHASE ONLY.
-After the full deployment workflow has been validated, replace
-AdministratorAccess with a custom least-privilege policy containing only
-the IAM actions that Infra Genie actually calls.
-
-The template is structured so the permission attachment is isolated in a
-dedicated "Permissions" section — search for "TESTING ONLY" to find the
-exact lines to swap out when hardening for production.
-
-SECURITY INVARIANTS
-───────────────────
-• Temporary STS credentials (AccessKeyId / SecretAccessKey / SessionToken)
-  are NEVER written to the database, logs, or API responses.
-• The External ID is stored in the database but is NEVER returned in the
-  "list connections" API response — it is only exposed at connection-setup
-  time so the user can embed it in the CloudFormation template.
-• All DB queries are scoped to the authenticated user's ID (multi-tenant).
-"""
 
 import logging
 import re

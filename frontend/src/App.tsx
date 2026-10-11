@@ -11,6 +11,7 @@ import ProjectsPage from '@/pages/ProjectsPage';
 import PipelinesPage from '@/pages/PipelinesPage';
 import DeploymentsPage from '@/pages/DeploymentsPage';
 import DeploymentReviewPage from '@/pages/DeploymentReviewPage';
+import DeploymentResultsPage from '@/pages/DeploymentResultsPage';
 import AgentsPage from '@/pages/AgentsPage';
 import MonitoringPage from '@/pages/MonitoringPage';
 import InsightsPage from '@/pages/InsightsPage';
@@ -22,9 +23,9 @@ import CloudAccountsPage from '@/pages/CloudAccountsPage';
 
 type Page = 'dashboard' | 'projects' | 'deployments' | 'agents' | 'monitoring' | 'insights' | 'pipelines' | 'security' | 'cost' | 'reports' | 'settings' | 'cloud-accounts';
 
-/** Sub-page state for pages that need a selected-item context (e.g. review a deployment). */
+/** Sub-page state for pages that need a selected-item context. */
 interface SubPageState {
-  page: 'deployment-review';
+  page: 'deployment-review' | 'deployment-results';
   deploymentId: string;
   projectName?: string;
 }
@@ -118,6 +119,12 @@ function Dashboard() {
     setActivePage('deployments');
   };
 
+  /** Navigate to the deployment results sub-page. */
+  const openDeploymentResults = (deploymentId: string) => {
+    setSubPage({ page: 'deployment-results', deploymentId });
+    setActivePage('deployments');
+  };
+
   /** Close sub-page and return to the parent page. */
   const closeSubPage = () => setSubPage(null);
 
@@ -134,7 +141,10 @@ function Dashboard() {
   }, [activePage, subPage]);
 
   const crumbs = subPage
-    ? [pageMeta.deployments.title, 'Review Deployment']
+    ? [
+        pageMeta.deployments.title,
+        subPage.page === 'deployment-results' ? 'Deployment Results' : 'Review Deployment',
+      ]
     : [pageMeta[activePage].title];
 
   const renderPage = () => {
@@ -144,6 +154,16 @@ function Dashboard() {
         <DeploymentReviewPage
           deploymentId={subPage.deploymentId}
           projectName={subPage.projectName}
+          onBack={closeSubPage}
+          onViewResults={openDeploymentResults}
+        />
+      );
+    }
+
+    if (subPage?.page === 'deployment-results') {
+      return (
+        <DeploymentResultsPage
+          deploymentId={subPage.deploymentId}
           onBack={closeSubPage}
         />
       );
@@ -157,6 +177,7 @@ function Dashboard() {
         return (
           <DeploymentsPage
             onReviewDeployment={openDeploymentReview}
+            onViewResults={openDeploymentResults}
           />
         );
       case 'agents': return <AgentsPage />;

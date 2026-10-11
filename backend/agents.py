@@ -1,21 +1,4 @@
-"""
-LangGraph Multi-Agent Orchestrator.
 
-Graph flow:
-  analyze_project -> discover_apps -> select_strategy
-    -> {Docker, Terraform, Kubernetes, CI/CD, Architecture,
-        Monitoring, Security, Cost} (parallel)
-  -> aggregate_results
-
-The specialists do not invent detection anymore: the deterministic
-`ProjectDetails` summary produced by `static_analysis.analyze_repo_static`
-is passed in as `source_code_summary` (it's a dict, not a string). Each agent's
-system prompt instructs it to base all claims on `source_code_summary`. If a
-field is empty, it returns a short explicit note rather than guessing.
-
-Each specialist streams its LLM response through `on_llm_token` (when provided)
-so the live analysis terminal shows what the model is actually generating.
-"""
 import asyncio
 import json
 import re

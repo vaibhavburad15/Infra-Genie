@@ -1,20 +1,4 @@
-"""
-Deterministic static repository analyzer — no LLM required.
 
-Inputs:
-  - a directory on disk (already cloned repo OR extracted ZIP)
-  - or a zip path
-
-Output: a deterministic `DetailedAnalysis` dict that the UI shows to the user
-even when the LLM is unavailable / offline. The orchestrator then passes this
-into every specialist agent's prompt, so the LLM's reasoning is *augmentation*
-on top of reliable detection — not primary detection (which used to hallucinate).
-
-We deliberately use exact string matches against known dependency names rather
-than embedding/ML — the whole point is to never guess. If a tool isn't
-recognised, it is omitted; if the user wants better coverage, they can suggest
-additions to FRAMEWORK_SIGNATURES below.
-"""
 from __future__ import annotations
 
 import json

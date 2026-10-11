@@ -1,35 +1,3 @@
-"""
-discovery_routes.py — AWS Infrastructure Discovery API for Infra Genie.
-
-Endpoints
-─────────
-  POST  /api/cloud/aws/{connection_id}/discover
-        Trigger a full discovery run on a CONNECTED AWS account.
-        Runs boto3 calls in a thread pool, persists results to DB.
-        Returns the complete structured discovery result.
-
-  GET   /api/cloud/aws/{connection_id}/discover
-        Return the last cached discovery result without re-running AWS calls.
-        Returns 404 if no discovery has been run yet.
-
-  GET   /api/cloud/aws/{connection_id}/discover/summary
-        Return only the lightweight summary counts (vpc_count, ec2_count, etc.)
-        for the last discovery. Fast — no AWS calls.
-
-Security
-────────
-• Every endpoint requires a valid JWT (same _require_user pattern as
-  cloud_routes.py and agent_routes.py — inlined to avoid circular imports).
-• DB queries are always scoped to current_user.id.
-• The full discovery result may contain internal network topology; it is
-  only returned to the authenticated owner of the connection.
-
-Architecture note
-─────────────────
-Discovery is deterministic — no LLM involved here. The AWSDiscoveryService
-calls read-only AWS APIs and returns structured JSON. The LLM receives this
-JSON as environment context during Deployment Planning (Step 6).
-"""
 
 import logging
 import uuid as _uuid

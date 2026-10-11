@@ -512,6 +512,92 @@ export async function approveDeployment(deploymentId: string, approved: boolean)
   });
 }
 
+export async function applyDeployment(deploymentId: string): Promise<Deployment> {
+  return request<Deployment>(`/api/deployments/${encodeURIComponent(deploymentId)}/apply`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({}),
+  });
+}
+
+export interface DeploymentStrategyComponent {
+  name: string;
+  component_type: string;
+  target: string;
+  artifact_type: string;
+  dependencies: string[];
+  health_check_required: boolean;
+  rationale: string;
+  assumptions: string[];
+  exposed_ports: number[];
+}
+
+export interface DeploymentCostEstimate {
+  monthly_usd_low: number | null;
+  monthly_usd_high: number | null;
+  currency: string;
+  assumptions: string[];
+  disclaimer: string;
+}
+
+export interface DeploymentStrategyData {
+  strategy_version: number;
+  deployment_id: string;
+  project_id: string;
+  created_at: string;
+  components: DeploymentStrategyComponent[];
+  primary_target: string;
+  description: string;
+  rationale: string;
+  limitations: string[];
+  unsupported_requirements: string[];
+  cost_estimate: DeploymentCostEstimate | null;
+  confidence: string;
+  unresolved_requirements: string[];
+  is_valid: boolean;
+  validation_errors: string[];
+  strategy_digest: string | null;
+}
+
+export interface DeploymentStrategyResponse {
+  deployment_id: string;
+  status: string;
+  strategy: DeploymentStrategyData | null;
+  strategy_digest: string | null;
+}
+
+export async function getDeploymentStrategy(deploymentId: string): Promise<DeploymentStrategyResponse> {
+  return request<DeploymentStrategyResponse>(
+    `/api/deployments/${encodeURIComponent(deploymentId)}/strategy`
+  );
+}
+
+export interface DeploymentResults {
+  deployment_id: string;
+  project_name: string | null;
+  status: string;
+  region: string | null;
+  environment: string;
+  account_id_masked: string | null;
+  infra_status: string | null;
+  app_deploy_status: string | null;
+  verification_status: string | null;
+  verification_results: Record<string, unknown> | null;
+  outputs: Record<string, unknown>;
+  endpoint: string | null;
+  duration_seconds: number | null;
+  apply_started_at: string | null;
+  completed_at: string | null;
+  error_message: string | null;
+  plan_summary: DeploymentPlanSummary | null;
+}
+
+export async function getDeploymentResults(deploymentId: string): Promise<DeploymentResults> {
+  return request<DeploymentResults>(
+    `/api/deployments/${encodeURIComponent(deploymentId)}/results`
+  );
+}
+
 // ── Reports ──────────────────────────────────────────────────────────────
 
 export async function listReports(projectId: string) {

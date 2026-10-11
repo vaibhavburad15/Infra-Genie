@@ -161,18 +161,36 @@ class ProjectStatus(str, enum.Enum):
 
 
 class DeploymentStatus(str, enum.Enum):
+    # Pre-planning
     draft = "draft"
+    analyzing = "analyzing"
+    strategy_ready = "strategy_ready"
+    # Planning pipeline
     planning = "planning"
     plan_ready = "plan_ready"
+    # Approval gate
+    awaiting_approval = "awaiting_approval"
+    approved = "approved"
+    rejected = "rejected"
+    # Execution pipeline
+    applying = "applying"
+    infrastructure_ready = "infrastructure_ready"
+    deploying_application = "deploying_application"
+    verifying = "verifying"
+    # Terminal success
+    deployed = "deployed"
+    # Terminal failures (granular)
+    strategy_failed = "strategy_failed"
+    artifact_failed = "artifact_failed"
+    plan_failed = "plan_failed"
+    apply_failed = "apply_failed"
+    application_deploy_failed = "application_deploy_failed"
+    verification_failed = "verification_failed"
+    failed = "failed"
+    # Legacy aliases kept for backwards compatibility
     pending = "pending"
     running = "running"
     success = "success"
-    failed = "failed"
-    awaiting_approval = "awaiting_approval"
-    rejected = "rejected"
-    approved = "approved"
-    applying = "applying"
-    deployed = "deployed"
 
 
 class OrgRole(str, enum.Enum):
@@ -292,6 +310,20 @@ class Deployment(Base):
     completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     duration_seconds: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     artifact_dir: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+
+    # ── Deployment strategy (v5) ───────────────────────────────────────────────
+    # Persisted validated DeploymentStrategy JSON.  The strategy_digest ties
+    # the plan artifact to this exact strategy — any change invalidates the plan.
+    strategy_json: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON, nullable=True)
+    strategy_digest: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+
+    # ── Granular execution state (v5) ─────────────────────────────────────────
+    apply_started_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    infra_status: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    app_deploy_status: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    verification_status: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    verification_results: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON, nullable=True)
+
     created_at: Mapped[Optional[datetime]] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -496,7 +528,17 @@ class DeploymentOut(BaseModel):
     created_at: datetime
     updated_at: Optional[datetime] = None
 
-    @field_serializer('approved_at', 'plan_created_at', 'started_at', 'completed_at', 'created_at', 'updated_at', mode='plain')
+    # v5 granular execution fields
+    strategy_json: Optional[dict] = None
+    strategy_digest: Optional[str] = None
+    apply_started_at: Optional[datetime] = None
+    infra_status: Optional[str] = None
+    app_deploy_status: Optional[str] = None
+    verification_status: Optional[str] = None
+    verification_results: Optional[dict] = None
+
+    @field_serializer('approved_at', 'plan_created_at', 'started_at', 'completed_at',
+                      'apply_started_at', 'created_at', 'updated_at', mode='plain')
     def serialize_dates(self, v: Optional[datetime]) -> Optional[str]:
         return serialize_utc_datetime(v)
 

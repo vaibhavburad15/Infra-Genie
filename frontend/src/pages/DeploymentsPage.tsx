@@ -16,36 +16,52 @@ interface DeploymentsPageProps {
   /** Called when the user clicks "Review plan" on a deployment card.
    *  The parent (Dashboard in App.tsx) switches to DeploymentReviewPage. */
   onReviewDeployment?: (deploymentId: string, projectName?: string) => void;
+  /** Called when the user clicks "View results" on a deployed/failed card. */
+  onViewResults?: (deploymentId: string) => void;
 }
 
 // ── Style helpers ─────────────────────────────────────────────────────────────
 
 const statusBadge: Record<string, string> = {
-  planning:          'bg-amber-50 text-amber-700 border-amber-200',
-  plan_ready:        'bg-primary-50 text-primary border-primary-200',
-  awaiting_approval: 'bg-primary-50 text-primary border-primary-200',
-  approved:          'bg-emerald-50 text-emerald-700 border-emerald-200',
-  applying:          'bg-amber-50 text-amber-700 border-amber-200',
-  deployed:          'bg-emerald-50 text-emerald-700 border-emerald-200',
-  rejected:          'bg-gray-100 text-gray-600 border-gray-200',
-  failed:            'bg-red-50 text-red-600 border-red-200',
-  pending:           'bg-gray-100 text-gray-500 border-gray-200',
-  running:           'bg-gray-100 text-gray-500 border-gray-200',
-  success:           'bg-emerald-50 text-emerald-700 border-emerald-200',
+  planning:               'bg-amber-50 text-amber-700 border-amber-200',
+  plan_ready:             'bg-primary-50 text-primary border-primary-200',
+  awaiting_approval:      'bg-primary-50 text-primary border-primary-200',
+  approved:               'bg-emerald-50 text-emerald-700 border-emerald-200',
+  applying:               'bg-amber-50 text-amber-700 border-amber-200',
+  infrastructure_ready:   'bg-blue-50 text-blue-700 border-blue-200',
+  deploying_application:  'bg-amber-50 text-amber-700 border-amber-200',
+  verifying:              'bg-purple-50 text-purple-700 border-purple-200',
+  deployed:               'bg-emerald-50 text-emerald-700 border-emerald-200',
+  rejected:               'bg-gray-100 text-gray-600 border-gray-200',
+  failed:                 'bg-red-50 text-red-600 border-red-200',
+  apply_failed:           'bg-red-50 text-red-600 border-red-200',
+  application_deploy_failed: 'bg-orange-50 text-orange-700 border-orange-200',
+  verification_failed:    'bg-orange-50 text-orange-700 border-orange-200',
+  plan_failed:            'bg-red-50 text-red-600 border-red-200',
+  pending:                'bg-gray-100 text-gray-500 border-gray-200',
+  running:                'bg-gray-100 text-gray-500 border-gray-200',
+  success:                'bg-emerald-50 text-emerald-700 border-emerald-200',
 };
 
 const statusLabel: Record<string, string> = {
-  planning:          'preparing Terraform plan',
-  plan_ready:        'plan ready · awaiting review',
-  awaiting_approval: 'awaiting approval',
-  approved:          'approved · ready to apply',
-  applying:          'applying Terraform',
-  deployed:          'deployed',
-  rejected:          'rejected',
-  failed:            'failed',
-  pending:           'pending',
-  running:           'legacy: running',
-  success:           'legacy: success',
+  planning:               'preparing Terraform plan',
+  plan_ready:             'plan ready · awaiting review',
+  awaiting_approval:      'awaiting approval',
+  approved:               'approved · ready to deploy',
+  applying:               'applying infrastructure',
+  infrastructure_ready:   'infrastructure ready',
+  deploying_application:  'deploying application',
+  verifying:              'verifying',
+  deployed:               'deployed ✓',
+  rejected:               'rejected',
+  failed:                 'failed',
+  apply_failed:           'infrastructure failed',
+  application_deploy_failed: 'app deploy failed',
+  verification_failed:    'verification failed',
+  plan_failed:            'plan failed',
+  pending:                'pending',
+  running:                'legacy: running',
+  success:                'legacy: success',
 };
 
 const envColors: Record<string, string> = {
@@ -62,7 +78,7 @@ function actionColor(action: string) {
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export default function DeploymentsPage({ onReviewDeployment }: DeploymentsPageProps) {
+export default function DeploymentsPage({ onReviewDeployment, onViewResults }: DeploymentsPageProps) {
   const [projects, setProjects]       = useState<Project[]>([]);
   const [accounts, setAccounts]       = useState<CloudAccountOut[]>([]);
   const [deployments, setDeployments] = useState<Deployment[]>([]);
@@ -110,7 +126,8 @@ export default function DeploymentsPage({ onReviewDeployment }: DeploymentsPageP
 
   // Auto-refresh while planning is in progress
   const needsRefresh = deployments.some((d) =>
-    ['planning', 'approved', 'applying'].includes(d.status));
+    ['planning', 'approved', 'applying', 'infrastructure_ready',
+     'deploying_application', 'verifying'].includes(d.status));
   useEffect(() => {
     if (!needsRefresh) return;
     const timer = setInterval(() => { void load(true); }, 5000);
@@ -159,9 +176,14 @@ export default function DeploymentsPage({ onReviewDeployment }: DeploymentsPageP
 
   const pendingApprovalCount = deployments.filter((d) =>
     ['plan_ready', 'awaiting_approval'].includes(d.status)).length;
-  const applyingCount   = deployments.filter((d) => ['approved', 'applying'].includes(d.status)).length;
-  const deployedCount   = deployments.filter((d) => ['deployed', 'success'].includes(d.status)).length;
-  const failedCount     = deployments.filter((d) => d.status === 'failed').length;
+  const applyingCount = deployments.filter((d) =>
+    ['approved', 'applying', 'infrastructure_ready',
+     'deploying_application', 'verifying'].includes(d.status)).length;
+  const deployedCount = deployments.filter((d) =>
+    ['deployed', 'success'].includes(d.status)).length;
+  const failedCount = deployments.filter((d) =>
+    ['failed', 'apply_failed', 'application_deploy_failed',
+     'verification_failed', 'plan_failed'].includes(d.status)).length;
 
   // ── Render ──────────────────────────────────────────────────────────────────
 
@@ -230,8 +252,12 @@ export default function DeploymentsPage({ onReviewDeployment }: DeploymentsPageP
       {/* Deployment cards */}
       {!loading && !error && deployments.map((dep) => {
         const summary = dep.plan_summary;
-        const busy    = ['planning', 'approved', 'applying'].includes(dep.status);
+        const busy      = ['planning', 'approved', 'applying', 'infrastructure_ready',
+                           'deploying_application', 'verifying'].includes(dep.status);
         const canReview = ['plan_ready', 'awaiting_approval'].includes(dep.status) && Boolean(summary);
+        const canViewResult = ['deployed', 'success', 'apply_failed',
+                               'application_deploy_failed', 'verification_failed',
+                               'failed'].includes(dep.status);
 
         return (
           <div key={dep.id} className="card overflow-hidden">
@@ -308,15 +334,28 @@ export default function DeploymentsPage({ onReviewDeployment }: DeploymentsPageP
                   <Loader size={13} className="animate-spin" />
                   {dep.status === 'planning'
                     ? 'Generating workspace and running terraform init, validate, and plan…'
-                    : 'Approved — waiting for the apply phase to be triggered.'}
+                    : dep.status === 'approved'
+                      ? 'Approved — ready to deploy. Open the review page to start the deployment.'
+                      : dep.status === 'applying'
+                        ? 'Applying infrastructure (terraform apply running)…'
+                        : dep.status === 'infrastructure_ready'
+                          ? 'Infrastructure ready — deploying application…'
+                          : dep.status === 'deploying_application'
+                            ? 'Deploying application artifacts…'
+                            : 'Running health verification checks…'}
                 </div>
               )}
 
-              {/* APPROVED state — nothing is applying, show clear message */}
-              {dep.status === 'approved' && !busy && (
-                <div className="mt-4 flex items-center gap-2 px-3 py-2 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs">
-                  <CheckCircle2 size={13} />
-                  Deployment approved. No AWS infrastructure has been created yet.
+              {/* View results CTA */}
+              {canViewResult && onViewResults && (
+                <div className="mt-4 flex items-center justify-end">
+                  <button
+                    onClick={() => onViewResults(dep.id)}
+                    className="btn btn-secondary btn-sm"
+                    aria-label={`View results for ${projectMap[dep.project_id] || 'deployment'}`}
+                  >
+                    <Eye size={13} /> View results
+                  </button>
                 </div>
               )}
 

@@ -1,22 +1,4 @@
-"""Terraform workspace generation and reviewed-plan execution helpers.
 
-LLM-generated Terraform is treated as input data. The worker writes it into a
-deployment-specific workspace, rejects constructs that can execute arbitrary
-commands or load non-AWS providers, then lets Terraform produce the resource
-actions shown to the user before any apply is possible.
-
-Security invariants
-───────────────────
-• AWS credentials (access key, secret key, session token) are NEVER logged,
-  stored in the workspace, or returned in any API response.
-• The deployment workspace is strictly scoped under settings.resolved_artifact_dir.
-  Path traversal is prevented by verifying the resolved path is a child of the
-  base directory.
-• Subprocess calls use argument arrays (never shell=True or string concatenation).
-• Terraform init runs with -backend=false so no remote state is configured or
-  modified during the planning phase.
-• terraform apply is NOT called anywhere in the planning workflow.
-"""
 from __future__ import annotations
 
 import hashlib

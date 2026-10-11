@@ -1,27 +1,4 @@
-"""
-cloud_routes.py — FastAPI router for AWS cloud account connectivity.
 
-Endpoints
-─────────
-  POST   /api/cloud/aws/connect                 Start connection (generate External ID + CFN template)
-  GET    /api/cloud/aws/{connection_id}/setup   Resume setup for a PENDING/FAILED connection
-  POST   /api/cloud/aws/{connection_id}/verify  Verify via STS AssumeRole
-  GET    /api/cloud/aws                         List user's connected AWS accounts
-  DELETE /api/cloud/aws/{connection_id}         Disconnect (soft-delete)
-
-Security
-────────
-• Every endpoint requires a valid JWT (require_user dependency — inlined here
-  to avoid a circular import with main.py, same pattern as agent_routes.py).
-• DB queries are always scoped to current_user.id — one user CANNOT access
-  another user's cloud accounts.
-• Temporary STS credentials are used in-memory inside the service layer and
-  are NEVER returned to the frontend.
-• The external_id is included in the connect response (user needs it for CFN)
-  but is NEVER included in list/detail responses.
-• Structured error responses use a consistent { status, error_code, message }
-  shape so the frontend can render actionable help text.
-"""
 
 import logging
 import uuid as _uuid

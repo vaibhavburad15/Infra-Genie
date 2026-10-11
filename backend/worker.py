@@ -1,23 +1,4 @@
-"""
-RQ Worker — run this process separately to consume background jobs.
-  python worker.py
 
-On Windows, RQ's UnixSignalDeathPenalty crashes because SIGALRM doesn't
-exist. We replace it with a no-op class so jobs run without being killed
-on timeout (job_timeout is set generously per-task in tasks.py instead).
-
-IMPORTANT: this patch must be applied to `Worker`/`SimpleWorker` directly,
-*after* they've been imported — not to `rq.timeouts.UnixSignalDeathPenalty`
-before import. Merely doing `import rq.timeouts` first imports the `rq`
-package itself (Python always imports a package's __init__.py before any
-of its submodules), and rq/__init__.py already does
-`from .worker import SimpleWorker, Worker` internally. That import binds
-`Worker.death_penalty_class = UnixSignalDeathPenalty` using the *original*
-class object before our patch ever runs — so patching the module attribute
-first has no effect; SimpleWorker keeps using the real (SIGALRM-based)
-class regardless. Setting the attribute on the classes themselves, after
-they're imported, sidesteps that ordering problem entirely.
-"""
 import os
 import socket
 import subprocess

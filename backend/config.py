@@ -1,13 +1,4 @@
-"""
-InfraGenie — Central Configuration
 
-All values are read from environment variables (or a .env file).
-This file contains ONLY:
-  - The Settings class and its field type definitions
-  - Environment variable mappings
-  - Genuinely safe, non-sensitive generic defaults
-  - The settings singleton
-"""
 import os
 
 from pydantic import SecretStr

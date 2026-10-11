@@ -1,8 +1,4 @@
-"""Validation helpers for uploaded project ZIP archives.
 
-The validator only reads ZIP metadata.  It never extracts or executes archive
-members, which keeps it suitable for use before an upload is persisted.
-"""
 
 from __future__ import annotations
 

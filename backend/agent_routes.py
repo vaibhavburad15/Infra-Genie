@@ -1,24 +1,4 @@
-"""
-InfraGenie — Agent Registry & Configuration API (v3 multi-tenant aware)
 
-Routes:
-  GET  /agents            → full agent roster (metadata + per-user state + real stats)
-  GET  /agents/{id}      → single agent with state
-  PUT  /agents/{id}       → enable / disable an agent for the current user
-
-The agent roster defined here (AGENT_ROSTER) is the single source of truth for
-the frontend's "AI Agent Fleet" page. Enable/disable state is persisted per user
-in the `agent_configs` table in PostgreSQL — NOT in browser localStorage.
-
-Auth: mirrors main.py's `require_user` (v3 JWT scheme) locally so this router can
-be imported from main without a circular import. Keep in sync if the JWT scheme
-ever changes.
-
-Pipeline mapping (matches backend/agents.py):
-  core (always-on): analyzer, discovery
-  optional (8 live generation agents): docker, terraform, kubernetes, cicd,
-                                       architecture, monitoring, security, cost
-"""
 import uuid
 from typing import List, Optional
 
