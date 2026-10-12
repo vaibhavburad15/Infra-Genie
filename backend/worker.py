@@ -1,6 +1,5 @@
 
 import os
-import socket
 import subprocess
 import sys
 import time
@@ -147,18 +146,22 @@ def ensure_redis():
     # ── Step 3: Redis readiness (always checked) ───────────────────────────
     # Runs whether the container was just started OR was already up.
     # Catches: container up but Redis still initializing / process crashed.
-    for attempt in range(1, 11):
-        with socket.socket() as s:
-            try:
-                s.connect((REDIS_HOST, REDIS_PORT))
-                print("[worker] Redis is ready.")
-                return
-            except ConnectionRefusedError:
-                print(f"[worker] Waiting for Redis to accept connections... ({attempt}/10)")
-                time.sleep(1)
+    # A TCP connect is not enough: Docker Desktop's port proxy accepts
+    # connections before Redis listens, and Redis refuses commands while it
+    # loads its dataset. Only a successful PING means it is ready.
+    from redis import Redis
+    from redis.exceptions import BusyLoadingError, ConnectionError as RedisConnectionError
+    for attempt in range(1, 31):
+        try:
+            Redis(host=REDIS_HOST, port=REDIS_PORT, socket_connect_timeout=2).ping()
+            print("[worker] Redis is ready.")
+            return
+        except (RedisConnectionError, BusyLoadingError):
+            print(f"[worker] Waiting for Redis to accept commands... ({attempt}/30)")
+            time.sleep(1)
 
     raise RuntimeError(
-        f"[worker] Redis never became ready on {REDIS_HOST}:{REDIS_PORT} after 10s.\n"
+        f"[worker] Redis never became ready on {REDIS_HOST}:{REDIS_PORT} after 30s.\n"
         f"Check container logs with:  docker logs {redis_container}"
     )
 
@@ -185,8 +188,22 @@ if sys.platform == "win32":
 # ──────────────────────────────────────────────
 # Entry point
 # ──────────────────────────────────────────────
+def ensure_ansible_image():
+    """Build the Ansible runner image at startup (if missing) so the first
+    playbook run does not wait for it. A failure is reported but does not
+    stop the worker: only server (EC2) deployments need the image."""
+    from ansible_engine import IMAGE, AnsibleError, ensure_image
+    try:
+        print(f"[worker] Checking Ansible runner image '{IMAGE}' (built on first start)...")
+        ensure_image()
+        print(f"[worker] Ansible runner image '{IMAGE}' is ready.")
+    except (AnsibleError, OSError) as exc:
+        print(f"[worker] WARNING: Ansible runner image is not available: {exc}")
+
+
 if __name__ == "__main__":
     ensure_redis()
+    ensure_ansible_image()
 
     conn = get_redis_conn()
     queue = Queue("infragenie", connection=conn)

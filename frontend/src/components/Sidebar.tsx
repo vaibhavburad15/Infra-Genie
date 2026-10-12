@@ -15,12 +15,13 @@ import {
   ChevronsRight,
   Cloud,
   X,
+  Terminal,
   type LucideIcon,
 } from 'lucide-react';
 import { useEffect } from 'react';
 import { useAuth } from '@/context/useAuth';
 
-type Page = 'dashboard' | 'projects' | 'agents' | 'pipelines' | 'deployments' | 'monitoring' | 'security' | 'cost' | 'insights' | 'reports' | 'settings' | 'cloud-accounts';
+type Page = 'dashboard' | 'projects' | 'ansible' | 'agents' | 'pipelines' | 'deployments' | 'monitoring' | 'security' | 'cost' | 'insights' | 'reports' | 'settings' | 'cloud-accounts';
 
 interface SidebarProps {
   activePage: Page;
@@ -44,6 +45,7 @@ const navGroups: NavItem[][] = [
   [
     { id: 'pipelines',      label: 'Pipelines',         icon: GitBranch },
     { id: 'deployments',    label: 'Deployments',       icon: Rocket },
+    { id: 'ansible',        label: 'Ansible',           icon: Terminal },
     { id: 'monitoring',     label: 'Monitoring',        icon: Activity },
   ],
   [

@@ -9,6 +9,7 @@ import {
   type Project, type CloudAccountOut, type Deployment,
 } from '@/api';
 import { PageHeader, StatCard, EmptyState, LoadingState } from '@/components/ui';
+import DeploymentFailurePanel from '@/components/DeploymentFailurePanel';
 
 // ── Props ─────────────────────────────────────────────────────────────────────
 
@@ -252,7 +253,7 @@ export default function DeploymentsPage({ onReviewDeployment, onViewResults }: D
       {/* Deployment cards */}
       {!loading && !error && deployments.map((dep) => {
         const summary = dep.plan_summary;
-        const busy      = ['planning', 'approved', 'applying', 'infrastructure_ready',
+        const busy      = ['planning', 'applying', 'infrastructure_ready',
                            'deploying_application', 'verifying'].includes(dep.status);
         const canReview = ['plan_ready', 'awaiting_approval'].includes(dep.status) && Boolean(summary);
         const canViewResult = ['deployed', 'success', 'apply_failed',
@@ -334,9 +335,7 @@ export default function DeploymentsPage({ onReviewDeployment, onViewResults }: D
                   <Loader size={13} className="animate-spin" />
                   {dep.status === 'planning'
                     ? 'Generating workspace and running terraform init, validate, and plan…'
-                    : dep.status === 'approved'
-                      ? 'Approved — ready to deploy. Open the review page to start the deployment.'
-                      : dep.status === 'applying'
+                    : dep.status === 'applying'
                         ? 'Applying infrastructure (terraform apply running)…'
                         : dep.status === 'infrastructure_ready'
                           ? 'Infrastructure ready — deploying application…'
@@ -355,6 +354,25 @@ export default function DeploymentsPage({ onReviewDeployment, onViewResults }: D
                     aria-label={`View results for ${projectMap[dep.project_id] || 'deployment'}`}
                   >
                     <Eye size={13} /> View results
+                  </button>
+                </div>
+              )}
+
+              {/* Deploy CTA — approved plans are deployed from the review page */}
+              {dep.status === 'approved' && (
+                <div className="mt-4 flex items-center gap-3 flex-wrap">
+                  <div className="flex-1 min-w-[220px] px-3 py-2 rounded-xl bg-emerald-50 border border-emerald-200 flex items-center gap-2">
+                    <ShieldCheck size={13} className="text-emerald-700" />
+                    <p className="text-emerald-700 text-xs font-medium">
+                      Approved — ready to deploy to AWS.
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => handleReview(dep)}
+                    className="btn btn-primary btn-sm"
+                    aria-label={`Deploy ${projectMap[dep.project_id] || 'deployment'}`}
+                  >
+                    <Rocket size={13} /> Deploy
                   </button>
                 </div>
               )}
@@ -397,8 +415,16 @@ export default function DeploymentsPage({ onReviewDeployment, onViewResults }: D
                 </details>
               )}
 
-              {/* Error message */}
-              {(dep.status === 'failed' || dep.error_message) && (
+              {/* Error: actual cause + one-click fixes */}
+              {dep.failure_details ? (
+                <DeploymentFailurePanel
+                  compact
+                  deployment={dep}
+                  failure={dep.failure_details}
+                  onResolved={(updated) =>
+                    setDeployments((all) => all.map((d) => (d.id === updated.id ? updated : d)))}
+                />
+              ) : (dep.status === 'failed' || dep.error_message) && (
                 <div className="mt-4 flex items-start gap-2 px-3 py-2 rounded-xl bg-red-50 border border-red-200">
                   <XCircle size={13} className="text-red-500 mt-0.5 flex-shrink-0" />
                   <p className="text-red-700 text-xs whitespace-pre-wrap">

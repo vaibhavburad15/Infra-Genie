@@ -449,6 +449,24 @@ export interface DeploymentPlanSummary {
   estimated_cost?: number | null;
 }
 
+export interface DeploymentResolution {
+  id: string;
+  label: string;
+  description: string;
+  params: Record<string, unknown>;
+  recommended: boolean;
+}
+
+/** Structured failure: the actual error plus server-computed fixes. */
+export interface DeploymentFailure {
+  stage: string;
+  title: string;
+  detail: string;
+  suggestion: string;
+  resolutions: DeploymentResolution[];
+  raw: string;
+}
+
 export interface Deployment {
   id: string;
   project_id: string;
@@ -462,6 +480,7 @@ export interface Deployment {
   terraform_plan?: string | null;
   plan_created_at?: string | null;
   error_message?: string | null;
+  failure_details?: DeploymentFailure | null;
   deployment_outputs?: Record<string, unknown> | null;
   approved_at?: string | null;
   started_at?: string | null;
@@ -496,6 +515,85 @@ export async function createDeployment(payload: {
   });
 }
 
+// ── Ansible (server configuration) ───────────────────────────────────────────
+
+export interface AnsibleRunSummary {
+  id: string;
+  deployment_id: string;
+  playbook: string;
+  status: 'queued' | 'running' | 'succeeded' | 'failed';
+  trigger: 'manual' | 'deployment';
+  return_code: number | null;
+  /** PLAY RECAP per host: ok / changed / unreachable / failed / ... */
+  recap: Record<string, Record<string, number>>;
+  created_at: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+}
+
+export interface AnsibleRun extends AnsibleRunSummary {
+  log: string;
+}
+
+export interface AnsibleDeploymentListItem {
+  deployment_id: string;
+  project_name: string;
+  status: string | null;
+  region: string | null;
+  server_ip: string | null;
+  last_run: AnsibleRunSummary | null;
+}
+
+export interface AnsiblePlaybook {
+  id: string;
+  label: string;
+  description: string;
+}
+
+export interface AnsibleFile {
+  path: string;
+  size: number;
+  redacted: boolean;
+}
+
+export interface DeploymentAnsible {
+  deployment_id: string;
+  project_name: string;
+  status: string | null;
+  server: { host: string; user: string } | null;
+  files: AnsibleFile[];
+  playbooks: AnsiblePlaybook[];
+  runs: AnsibleRunSummary[];
+  can_run: boolean;
+  run_blocked_reason: string | null;
+}
+
+export async function listAnsibleDeployments(): Promise<AnsibleDeploymentListItem[]> {
+  return request<AnsibleDeploymentListItem[]>('/api/ansible/deployments');
+}
+
+export async function getDeploymentAnsible(deploymentId: string): Promise<DeploymentAnsible> {
+  return request<DeploymentAnsible>(`/api/deployments/${encodeURIComponent(deploymentId)}/ansible`);
+}
+
+export async function getAnsibleFile(deploymentId: string, path: string): Promise<{ path: string; content: string }> {
+  return request<{ path: string; content: string }>(
+    `/api/deployments/${encodeURIComponent(deploymentId)}/ansible/file?path=${encodeURIComponent(path)}`,
+  );
+}
+
+export async function startAnsibleRun(deploymentId: string, playbook: string): Promise<AnsibleRunSummary> {
+  return request<AnsibleRunSummary>(`/api/deployments/${encodeURIComponent(deploymentId)}/ansible/runs`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ playbook }),
+  });
+}
+
+export async function getAnsibleRun(runId: string): Promise<AnsibleRun> {
+  return request<AnsibleRun>(`/api/ansible/runs/${encodeURIComponent(runId)}`);
+}
+
 export async function getDeployment(deploymentId: string): Promise<Deployment> {
   return request<Deployment>(`/api/deployments/${encodeURIComponent(deploymentId)}`);
 }
@@ -509,6 +607,15 @@ export async function approveDeployment(deploymentId: string, approved: boolean)
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ approved }),
+  });
+}
+
+/** Apply one of the resolutions stored in `failure_details` (by index). */
+export async function resolveDeployment(deploymentId: string, option: number): Promise<Deployment> {
+  return request<Deployment>(`/api/deployments/${encodeURIComponent(deploymentId)}/resolve`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ option }),
   });
 }
 

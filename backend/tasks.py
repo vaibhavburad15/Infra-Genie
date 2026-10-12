@@ -529,10 +529,14 @@ def task_run_deployment(deployment_id: str) -> None:
         TerraformError, assume_role_environment, deployment_workspace,
         run_terraform_plan, apply_plan,
     )
-    from deployment_adapter import run_application_deployment, run_verification
+    from deployment_adapter import (
+        discard_image_prebuild, run_application_deployment, run_verification,
+        start_artifact_prebuild,
+    )
 
     db = _get_sync_session()
     apply_start: Optional[datetime] = None
+    env: Optional[dict] = None
 
     try:
         # ── Acquire exclusive lock — skip if another worker holds it ─────────
@@ -598,6 +602,7 @@ def task_run_deployment(deployment_id: str) -> None:
         deployment.started_at = apply_start
         deployment.infra_status = "applying"
         deployment.error_message = None
+        deployment.failure_details = None
         deployment.updated_at = apply_start
         db.commit()
 
@@ -626,6 +631,8 @@ def task_run_deployment(deployment_id: str) -> None:
                 (deployment.plan_fingerprint or "")[:16],
                 fresh.fingerprint[:16],
             )
+            stored_fingerprint = deployment.plan_fingerprint or ""
+            approver_id = deployment.approved_by
             deployment.status = DeploymentStatus.awaiting_approval
             deployment.plan_summary = fresh.summary
             deployment.terraform_plan = fresh.display
@@ -644,12 +651,12 @@ def task_run_deployment(deployment_id: str) -> None:
             deployment.updated_at = datetime.utcnow()
             db.add(AuditLog(
                 org_id=deployment.org_id,
-                actor_id=deployment.approved_by,
+                actor_id=approver_id,
                 action="deployment.apply.plan_mismatch",
                 target_type="deployment",
                 target_id=str(deployment.id),
                 metadata_json={
-                    "stored_fingerprint": (deployment.plan_fingerprint or "")[:16],
+                    "stored_fingerprint": stored_fingerprint[:16],
                     "fresh_fingerprint": fresh.fingerprint[:16],
                 },
             ))
@@ -661,7 +668,16 @@ def task_run_deployment(deployment_id: str) -> None:
             "[DEPLOYMENT] terraform_apply_started | deployment_id=%s | fingerprint=%s",
             deployment_id, fresh.fingerprint[:16],
         )
-        outputs = apply_plan(workspace, env, "deployment.tfplan")
+        # Build the application image while Terraform creates the infrastructure.
+        try:
+            start_artifact_prebuild(deployment, project, workspace)
+        except Exception as prebuild_exc:  # the deploy step builds inline instead
+            _log.warning("[DEPLOYMENT] image_prebuild_not_started | %s", prebuild_exc)
+        try:
+            outputs = apply_plan(workspace, env, "deployment.tfplan")
+        except Exception:
+            discard_image_prebuild(deployment_id)
+            raise
         infra_finished = datetime.utcnow()
 
         deployment.infra_status = "ready"
@@ -703,10 +719,7 @@ def task_run_deployment(deployment_id: str) -> None:
             finished = datetime.utcnow()
             deployment.status = DeploymentStatus.application_deploy_failed
             deployment.app_deploy_status = "failed"
-            deployment.error_message = (
-                "Infrastructure provisioned successfully, but application deployment failed: "
-                + str(app_exc)[:8000]
-            )
+            _record_failure(deployment, app_exc, "app_deploy", env)
             deployment.completed_at = finished
             deployment.updated_at = finished
             if apply_start:
@@ -747,10 +760,7 @@ def task_run_deployment(deployment_id: str) -> None:
             # Mark it separately so the UI can show partial success.
             finished = datetime.utcnow()
             deployment.status = DeploymentStatus.verification_failed
-            deployment.error_message = (
-                "Infrastructure and application are deployed, but health verification failed: "
-                + str(verify_exc)[:4000]
-            )
+            _record_failure(deployment, verify_exc, "verification", env)
             deployment.completed_at = finished
             deployment.updated_at = finished
             if apply_start:
@@ -770,6 +780,7 @@ def task_run_deployment(deployment_id: str) -> None:
         finished = datetime.utcnow()
         deployment.status = DeploymentStatus.deployed
         deployment.error_message = None
+        deployment.failure_details = None
         deployment.completed_at = finished
         deployment.updated_at = finished
         if apply_start:
@@ -810,7 +821,7 @@ def task_run_deployment(deployment_id: str) -> None:
                 finished = datetime.utcnow()
                 deployment.status = DeploymentStatus.apply_failed
                 deployment.infra_status = "failed"
-                deployment.error_message = _terraform_user_message(exc)
+                _record_failure(deployment, exc, "apply", env)
                 deployment.completed_at = finished
                 deployment.updated_at = finished
                 if apply_start:
@@ -836,7 +847,7 @@ def task_run_deployment(deployment_id: str) -> None:
                 finished = datetime.utcnow()
                 deployment.status = DeploymentStatus.apply_failed
                 deployment.infra_status = "failed"
-                deployment.error_message = (str(exc) or type(exc).__name__)[:12000]
+                _record_failure(deployment, exc, "apply", env)
                 deployment.completed_at = finished
                 deployment.updated_at = finished
                 if apply_start:
@@ -850,6 +861,27 @@ def task_run_deployment(deployment_id: str) -> None:
 
     finally:
         db.close()
+
+
+def _record_failure(deployment: Any, error: Any, stage: str,
+                    env: Optional[dict] = None) -> None:
+    """Store structured failure details (actual error + one-click fixes) and a
+    plain-text error_message for older clients. Never raises."""
+    from deployment_errors import classify_failure, summary_message
+    try:
+        failure = classify_failure(
+            error,
+            stage=stage,
+            region=deployment.region or "",
+            env=env,
+            has_workspace=bool(deployment.terraform_workspace),
+        )
+    except Exception as exc:  # classification must never mask the original failure
+        failure = {"stage": stage, "title": "Deployment failed",
+                   "detail": str(error)[:4000], "suggestion": "", "resolutions": [],
+                   "raw": f"(classification failed: {exc})"}
+    deployment.failure_details = failure
+    deployment.error_message = summary_message(failure)
 
 
 def _terraform_user_message(exc: Any) -> str:
@@ -1034,6 +1066,29 @@ def task_plan_deployment(deployment_id: str) -> None:
         deployment.updated_at = datetime.utcnow()
         db.commit()
 
+        # Server deployments: generate the Ansible project (inventory is
+        # filled in after apply) and give Terraform the SSH key + worker IP.
+        terraform_main = workspace / "terraform" / "main.tf"
+        if terraform_main.exists() and 'variable "ssh_public_key"' in terraform_main.read_text(encoding="utf-8"):
+            from ansible_engine import prepare_workspace
+            from deployment_adapter import _project_source_dir
+            source = str(project.file_path or project.github_url or "")
+            ec2_health = next(
+                (c.health_check.path for c in strategy.components
+                 if c.target.value == "ec2" and c.health_check and c.health_check.path),
+                "/",
+            )
+            server_vars = prepare_workspace(
+                workspace,
+                app_name=project.name,
+                source=source,
+                source_dir=_project_source_dir(source),
+                health_path=ec2_health or "/",
+            )
+            with (workspace / "terraform" / "terraform.tfvars").open("a", encoding="utf-8") as tfvars:
+                for name, value in server_vars.items():
+                    tfvars.write(f"{name} = {_json.dumps(value)}\n")
+
         # ── Obtain temporary AWS credentials (never logged, never returned) ───
         _log.info(
             "[DEPLOYMENT] terraform_init_started | deployment_id=%s", deployment_id
@@ -1065,7 +1120,11 @@ def task_plan_deployment(deployment_id: str) -> None:
 
         # ── Transition to AWAITING_APPROVAL ───────────────────────────────────
         deployment.status = DeploymentStatus.awaiting_approval
+        deployment.infra_status = None
+        deployment.app_deploy_status = None
+        deployment.verification_status = None
         deployment.error_message = None
+        deployment.failure_details = None
         deployment.updated_at = datetime.utcnow()
         db.commit()
 
@@ -1105,7 +1164,7 @@ def task_plan_deployment(deployment_id: str) -> None:
                     ),
                     "validate_failed": (
                         "Terraform validation failed. The generated configuration "
-                        "has syntax or semantic errors. Re-run project analysis."
+                        "has syntax or semantic errors. Create a new plan to regenerate it."
                     ),
                     "plan_failed": (
                         "Terraform plan failed. Check the AWS permissions for the "
@@ -1145,7 +1204,15 @@ def task_plan_deployment(deployment_id: str) -> None:
                     user_message = " ".join(p.strip(" .") for p in parts if p) + "."
                 else:
                     user_message = _kind_messages.get(kind, str(exc)[:12000])
+                    # Terraform CLI failures: show what Terraform actually said.
+                    if kind in {"init_failed", "validate_failed", "plan_failed"} and str(exc).strip():
+                        user_message += " Terraform output: " + str(exc).strip()[-4000:]
                 deployment.error_message = user_message
+                stage = ("artifact_generation"
+                         if kind in {"llm_unavailable", "invalid_artifact",
+                                     "terraform_artifact_missing_resources"}
+                         else "planning")
+                _record_failure(deployment, exc, stage)
                 deployment.updated_at = datetime.utcnow()
                 db.commit()
         except Exception:
@@ -1163,7 +1230,7 @@ def task_plan_deployment(deployment_id: str) -> None:
             deployment = db.query(Deployment).filter(Deployment.id == deployment_id).first()
             if deployment:
                 deployment.status = DeploymentStatus.failed
-                deployment.error_message = (str(exc) or type(exc).__name__)[:12000]
+                _record_failure(deployment, exc, "planning")
                 deployment.updated_at = datetime.utcnow()
                 db.commit()
         except Exception:
@@ -1173,3 +1240,137 @@ def task_plan_deployment(deployment_id: str) -> None:
                 pass
     finally:
         db.close()
+
+
+def task_replan_deployment(deployment_id: str) -> None:
+    """Re-run `terraform plan` on an existing workspace (no LLM regeneration).
+
+    Used after a one-click resolution patched the workspace (for example a
+    newer RDS engine version) or to continue after a failed apply. Resources
+    already created stay in the workspace's Terraform state, so the new plan
+    only contains what is still missing or changed.
+
+        PLANNING → AWAITING_APPROVAL   (or FAILED with failure_details)
+    """
+    import logging as _log_mod
+    _log = _log_mod.getLogger(__name__)
+
+    from models import CloudAccount, Deployment, DeploymentStatus
+    from deployment_planner import (
+        TerraformError, assume_role_environment, deployment_workspace, run_terraform_plan,
+    )
+
+    db = _get_sync_session()
+    try:
+        deployment = (
+            db.query(Deployment)
+            .filter(Deployment.id == deployment_id)
+            .with_for_update(skip_locked=True)
+            .first()
+        )
+        if deployment is None or deployment.status != DeploymentStatus.planning:
+            return
+        env = None
+        try:
+            account = db.query(CloudAccount).filter(
+                CloudAccount.id == deployment.cloud_account_id
+            ).first()
+            if account is None:
+                raise TerraformError("Connected AWS account no longer exists.",
+                                     error_kind="workspace_error")
+            workspace = deployment_workspace(deployment.id)
+            if not (workspace / "terraform").exists():
+                raise TerraformError("The deployment workspace no longer exists. Generate a new plan.",
+                                     error_kind="workspace_error")
+            env = assume_role_environment(account)
+            result = run_terraform_plan(workspace, env)
+            deployment.plan_summary = result.summary
+            deployment.terraform_plan = result.display
+            deployment.plan_fingerprint = result.fingerprint
+            deployment.plan_created_at = result.plan_created_at
+            deployment.approved_by = None
+            deployment.approved_at = None
+            deployment.status = DeploymentStatus.awaiting_approval
+            deployment.infra_status = None
+            deployment.app_deploy_status = None
+            deployment.verification_status = None
+            deployment.error_message = None
+            deployment.failure_details = None
+            deployment.updated_at = datetime.utcnow()
+            db.commit()
+            _log.info("[DEPLOYMENT] replan_ready | deployment_id=%s", deployment_id)
+        except Exception as exc:
+            _log.exception("[DEPLOYMENT] replan_failed | deployment_id=%s", deployment_id)
+            db.rollback()
+            deployment = db.query(Deployment).filter(Deployment.id == deployment_id).first()
+            if deployment:
+                deployment.status = DeploymentStatus.failed
+                _record_failure(deployment, exc, "planning", env)
+                deployment.updated_at = datetime.utcnow()
+                db.commit()
+    finally:
+        db.close()
+
+
+# ── Ansible runs ──────────────────────────────────────────────────────────────
+
+def create_ansible_run(deployment_id: str, playbook: str, *, org_id: Any = None,
+                       user_id: Any = None, trigger: str = "manual") -> str:
+    """Insert a queued AnsibleRun row and return its id."""
+    from models import AnsibleRun
+
+    db = _get_sync_session()
+    try:
+        run = AnsibleRun(deployment_id=deployment_id, org_id=org_id, playbook=playbook,
+                         status="queued", triggered_by=user_id, trigger=trigger)
+        db.add(run)
+        db.commit()
+        return str(run.id)
+    finally:
+        db.close()
+
+
+def execute_ansible_run(run_id: str) -> int:
+    """Run one AnsibleRun to completion, streaming its output into the row so
+    the Ansible page can show it live. Returns the playbook exit code."""
+    import time as _time
+    from models import AnsibleRun
+    from ansible_engine import AnsibleError, parse_recap, run_playbook
+    from deployment_planner import deployment_workspace
+
+    db = _get_sync_session()
+    try:
+        run = db.query(AnsibleRun).filter(AnsibleRun.id == run_id).one()
+        run.status = "running"
+        run.started_at = datetime.utcnow()
+        run.log = ""
+        db.commit()
+
+        buffer: list[str] = []
+        flushed = {"at": _time.monotonic()}
+
+        def on_output(line: str) -> None:
+            buffer.append(line)
+            if _time.monotonic() - flushed["at"] >= 2:
+                run.log = "".join(buffer)[-200_000:]
+                db.commit()
+                flushed["at"] = _time.monotonic()
+
+        try:
+            code, output = run_playbook(deployment_workspace(run.deployment_id), run.playbook, on_output)
+        except AnsibleError as exc:
+            code, output = -1, "".join(buffer) + f"\n[InfraGenie] {exc}\n"
+        run.log = output[-200_000:]
+        run.return_code = code
+        run.recap = parse_recap(output)
+        run.status = "succeeded" if code == 0 else "failed"
+        run.finished_at = datetime.utcnow()
+        db.commit()
+        return code
+    finally:
+        db.close()
+
+
+def task_run_ansible(run_id: str) -> None:
+    """RQ entry point for playbooks started from the Ansible page."""
+    execute_ansible_run(run_id)

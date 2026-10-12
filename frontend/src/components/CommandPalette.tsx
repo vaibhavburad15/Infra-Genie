@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import {
   Search, LayoutDashboard, Boxes, GitBranch, Rocket,
   Bot, LineChart, ShieldCheck, DollarSign, Sparkles, FileText,
-  Settings, ArrowRight, CornerDownLeft, X, User
+  Settings, ArrowRight, CornerDownLeft, X, User, Terminal,
 } from 'lucide-react';
 
 export interface CommandItem {
@@ -65,6 +65,15 @@ export default function CommandPalette({
       icon: Rocket,
       action: () => { onNavigate('deployments'); onClose(); },
       keywords: ['releases', 'deploy', 'prod', 'staging'],
+    },
+    {
+      id: 'ansible',
+      title: 'Ansible',
+      subtitle: 'Server configuration, playbooks and run history',
+      category: 'Pages',
+      icon: Terminal,
+      action: () => { onNavigate('ansible'); onClose(); },
+      keywords: ['servers', 'ec2', 'playbooks', 'inventory', 'configuration'],
     },
     {
       id: 'agents',

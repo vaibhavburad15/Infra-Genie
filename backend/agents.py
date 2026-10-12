@@ -297,6 +297,10 @@ async def terraform_agent(state: Mapping[str, Any]) -> dict:
             if isinstance(app, dict) and app.get("name")
             and app.get("type") in {"backend", "frontend", "worker", "static"}
         ],
+        "resource_name_prefix": state.get("resource_name_prefix"),
+        "required_data_services": state.get("required_data_services") or [],
+        "required_outputs": state.get("required_outputs") or [],
+        "container_port": state.get("container_port"),
         "previous_validation_errors": state.get("terraform_generation_errors") or [],
     }
     sys_prompt = (
@@ -318,6 +322,43 @@ async def terraform_agent(state: Mapping[str, Any]) -> dict:
         "A single resource may cover multiple components when the architecture does so.\n"
         "- The resource count must follow the proposed architecture; one resource is valid when sufficient.\n"
         "- Set the AWS provider region to the supplied deployment region. Do not hardcode a different region.\n"
+        "- Implement exactly the AWS targets in deployment_strategy (primary_target and each "
+        "component's target, e.g. ecs_fargate -> ECS service on Fargate, ecr -> ECR repository, "
+        "rds -> RDS instance). Do not substitute a different compute service.\n"
+        "- Every literal resource name (name, family, identifier, cluster_id) must start with "
+        "resource_name_prefix. ALB and target group names must be at most 32 characters.\n"
+        "- Declare an output block for every name in required_outputs.\n"
+        "- For each entry in required_data_services provision a managed service in the "
+        "discovered default VPC subnets: postgres/mysql -> aws_db_instance (smallest "
+        "db.t3.micro or db.t4g.micro, 20 GB, engine_version as a major version only such as "
+        "\"16\" (never a minor version like \"15.8\"), no parameter_group_name, "
+        "skip_final_snapshot = true, publicly_accessible = false, "
+        "with an aws_db_subnet_group); mongodb -> Amazon DocumentDB (RDS has no MongoDB): "
+        "aws_docdb_cluster engine_version \"5.0.0\" using var.docdb_username/var.docdb_password/"
+        "var.docdb_name, one db.t4g.medium aws_docdb_cluster_instance, an aws_docdb_subnet_group "
+        "and an aws_docdb_cluster_parameter_group (family docdb5.0) with tls disabled, and "
+        "MONGODB_URI = mongodb://user:pass@<cluster endpoint>:27017/<name>?replicaSet=rs0&"
+        "readPreference=secondaryPreferred&retryWrites=false&authSource=admin; "
+        "redis -> a single-node aws_elasticache_cluster "
+        "(cache.t3.micro, with an aws_elasticache_subnet_group). Give each its own security "
+        "group that admits its port only from the application's security group.\n"
+        "- Database credentials: declare variable \"db_password\" (sensitive, no default), "
+        "variable \"db_username\" and variable \"db_name\" without defaults and use them. Never "
+        "hardcode a password. Pass connection strings to the container built from resource "
+        "attributes, e.g. postgresql://${var.db_username}:${var.db_password}@${aws_db_instance.X.endpoint}/${var.db_name} "
+        "and redis://${aws_elasticache_cluster.X.cache_nodes[0].address}:6379/0. Never set an "
+        "environment variable to an empty string.\n"
+        "- ECS on Fargate: network_mode = \"awsvpc\"; an aws_iam_role trusted by "
+        "ecs-tasks.amazonaws.com with an aws_iam_role_policy_attachment of "
+        "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy used as "
+        "execution_role_arn; an aws_cloudwatch_log_group used by the awslogs log driver; the "
+        "container image is \"${aws_ecr_repository.X.repository_url}:latest\" with "
+        "force_delete = true on the repository; aws_ecs_service uses cluster = (not "
+        "cluster_arn) and network_configuration with assign_public_ip = true in public subnets; "
+        "aws_lb_target_group uses target_type = \"ip\" and the container_port; the health check "
+        "path is /health when the app exposes it.\n"
+        "- Use separate security groups: the load balancer's admits the listener port (80) from "
+        "0.0.0.0/0; the service's admits container_port only from the load balancer's group.\n"
         "- If retry feedback is present, correct every listed validation error.\n"
         "- Never return Markdown, README text, directory trees, JavaScript, or explanatory prose.\n"
         "- Never include credentials, provisioners, local_file, external data sources, or non-AWS providers."
@@ -325,7 +366,7 @@ async def terraform_agent(state: Mapping[str, Any]) -> dict:
     raw = await _streamed_ask(
         state, "Terraform Agent", sys_prompt,
         json.dumps(context, ensure_ascii=False, sort_keys=True, default=str),
-        max_tokens=5000,
+        max_tokens=8000,
     )
     terraform_artifacts = _parse_terraform_json_output(raw, state)
     return {

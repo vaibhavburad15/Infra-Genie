@@ -30,6 +30,7 @@ class DeploymentTarget(str, enum.Enum):
     s3_cloudfront   = "s3_cloudfront"
     eks             = "eks"
     rds             = "rds"
+    documentdb      = "documentdb"  # MongoDB-compatible (RDS has no MongoDB engine)
     ecr             = "ecr"        # container registry — dependency, not standalone
     lambda_function = "lambda"
     unsupported     = "unsupported"
@@ -48,6 +49,7 @@ TARGET_REGISTRY: Dict[DeploymentTarget, TargetStatus] = {
     DeploymentTarget.ecs_fargate:     TargetStatus.active,
     DeploymentTarget.s3_cloudfront:   TargetStatus.active,
     DeploymentTarget.rds:             TargetStatus.active,
+    DeploymentTarget.documentdb:      TargetStatus.active,
     DeploymentTarget.ecr:             TargetStatus.active,
     DeploymentTarget.eks:             TargetStatus.planned,
     DeploymentTarget.lambda_function: TargetStatus.planned,
@@ -61,6 +63,7 @@ TARGET_LABELS: Dict[DeploymentTarget, str] = {
     DeploymentTarget.s3_cloudfront:   "S3 + CloudFront (static website)",
     DeploymentTarget.eks:             "Amazon EKS (Kubernetes)",
     DeploymentTarget.rds:             "Amazon RDS (managed database)",
+    DeploymentTarget.documentdb:      "Amazon DocumentDB (MongoDB-compatible)",
     DeploymentTarget.ecr:             "Amazon ECR (container registry)",
     DeploymentTarget.lambda_function: "AWS Lambda",
     DeploymentTarget.unsupported:     "Unsupported",
@@ -284,6 +287,18 @@ def _has_dockerfile(static: Dict[str, Any]) -> bool:
     return bool(container.get("has_dockerfile"))
 
 
+# Server frameworks the application deploy step can containerize without a
+# repository Dockerfile (see deployment_adapter._synthesize_dockerfile).
+_CONTAINERIZABLE_FRAMEWORKS = ("fastapi", "flask", "express", "nest", "koa", "fastify")
+
+
+def _can_containerize(static: Dict[str, Any]) -> bool:
+    names = [str((static.get("summary") or {}).get("primary_framework") or "")]
+    names += [str(f.get("name") or "") for f in static.get("frameworks") or [] if isinstance(f, dict)]
+    text = " ".join(names).lower()
+    return any(fw in text for fw in _CONTAINERIZABLE_FRAMEWORKS)
+
+
 def _has_database(static: Dict[str, Any]) -> bool:
     return bool(static.get("has_database_hint") or static.get("databases_orms"))
 
@@ -306,21 +321,62 @@ def _is_static_frontend(static: Dict[str, Any]) -> bool:
     return not _has_dockerfile(static)
 
 
+_FRONTEND_FRAMEWORKS = ("react", "vue", "angular", "svelte", "next", "nuxt")
+_BACKEND_FRAMEWORKS = ("fastapi", "flask", "django", "express", "nest", "koa", "fastify",
+                       "spring", "rails", "laravel", "gin")
+_SERVER_LANGUAGES = {"python", "go", "java", "rust", "c#", "ruby", "php", "elixir"}
+
+
 def _is_fullstack(static: Dict[str, Any]) -> bool:
-    """True when the static analysis detected both a frontend framework and
-    a backend framework / server-side language in the same project."""
+    """True when the analysis found both a frontend framework and a backend
+    (a backend framework or a server-side language) anywhere in the project,
+    not only as the primary language/framework — monorepos such as
+    frontend/ + backend/ are usually primarily TypeScript."""
     summary = static.get("summary", {}) or {}
-    lang = (summary.get("primary_language") or "").lower()
-    fw = (summary.get("primary_framework") or "").lower()
-    server_langs = {"python", "go", "java", "rust", "c#", "ruby", "php", "elixir"}
-    fe_fws = {"react", "vue", "vite", "angular", "svelte"}
-    has_server = lang in server_langs
-    has_frontend = any(f in fw for f in fe_fws)
-    # Also check if there are multiple detected frameworks
-    frameworks = static.get("frameworks", []) or []
-    fw_names = {f.get("name", "").lower() for f in frameworks}
-    fw_has_fe = any(f in fw_names for f in fe_fws)
-    return has_server and (has_frontend or fw_has_fe)
+    names = [str(summary.get("primary_framework") or "").lower()]
+    names += [str(f.get("name") or "").lower() for f in static.get("frameworks") or [] if isinstance(f, dict)]
+    languages = {str(summary.get("primary_language") or "").lower()}
+    languages |= {str(l.get("name") or "").lower() for l in static.get("languages") or [] if isinstance(l, dict)}
+    has_frontend = any(fe in name for name in names for fe in _FRONTEND_FRAMEWORKS)
+    has_backend = bool(languages & _SERVER_LANGUAGES) or any(
+        be in name for name in names for be in _BACKEND_FRAMEWORKS
+    )
+    return has_frontend and has_backend
+
+
+def _database_component(static: Dict[str, Any]) -> DeploymentComponent:
+    """Managed database matching the engine the project uses. MongoDB apps get
+    Amazon DocumentDB (RDS has no MongoDB engine); otherwise RDS."""
+    evidence = str([static.get("databases_orms"),
+                    (static.get("containerization") or {}).get("databases_detected_from_compose")]).lower()
+    target = DeploymentTarget.rds
+    if "mongo" in evidence and "postgres" not in evidence and "mysql" not in evidence:
+        target = DeploymentTarget.documentdb
+        port, rationale = 27017, (
+            "MongoDB dependency detected. RDS has no MongoDB engine, so the database is "
+            "Amazon DocumentDB (MongoDB-compatible) in a private subnet."
+        )
+        assumptions = ["MongoDB 5.0 API (DocumentDB); retryable writes are not supported.",
+                       "TLS is off; only the application's security group can reach it."]
+    elif "mysql" in evidence or "mariadb" in evidence:
+        port, rationale = 3306, "MySQL dependency detected. RDS MySQL in a private subnet."
+        assumptions = ["Not publicly accessible."]
+    else:
+        port, rationale = 5432, "Database dependency detected. RDS PostgreSQL in a private subnet."
+        assumptions = ["PostgreSQL assumed unless MySQL or MongoDB is detected.", "Not publicly accessible."]
+    return DeploymentComponent(
+        name="database",
+        component_type=ComponentType.managed_database,
+        target=target,
+        artifact_type=ArtifactType.none_required,
+        dependencies=[],
+        # Private by design: the worker cannot reach it. The application's
+        # own health check proves the database connection instead.
+        health_check_required=False,
+        health_check=HealthCheckSpec(protocol="tcp", port=port, timeout_seconds=300),
+        rationale=rationale,
+        assumptions=assumptions,
+    )
 
 
 def select_strategy(
@@ -345,7 +401,8 @@ def select_strategy(
     unsupported_reqs: List[str] = []
     primary_target = DeploymentTarget.ec2
 
-    has_docker = _has_dockerfile(static_analysis or {})
+    # A repository Dockerfile, or a server framework we can build an image for.
+    has_docker = _has_dockerfile(static_analysis or {}) or _can_containerize(static_analysis or {})
     has_k8s    = _has_k8s(static_analysis or {})
     has_db     = _has_database(static_analysis or {})
     is_static  = _is_static_frontend(static_analysis or {})
@@ -422,21 +479,24 @@ def select_strategy(
             health_check_required=False,
             rationale="Amazon ECR stores the container image for ECS Fargate.",
         ))
+        # Frontend: static build on S3 + CloudFront, built against the
+        # backend's public URL (so it deploys after the backend).
+        components.append(DeploymentComponent(
+            name="frontend",
+            component_type=ComponentType.static_web,
+            target=DeploymentTarget.s3_cloudfront,
+            artifact_type=ArtifactType.static_build,
+            dependencies=["backend"],
+            health_check_required=True,
+            health_check=HealthCheckSpec(protocol="http", path="/", timeout_seconds=300),
+            exposed_ports=[443, 80],
+            rationale=(
+                "Frontend built to static files and served from S3 + CloudFront; "
+                "it calls the backend through the backend's public URL."
+            ),
+        ))
         if has_db:
-            components.append(DeploymentComponent(
-                name="database",
-                component_type=ComponentType.managed_database,
-                target=DeploymentTarget.rds,
-                artifact_type=ArtifactType.none_required,
-                dependencies=[],
-                health_check_required=True,
-                health_check=HealthCheckSpec(protocol="tcp", port=5432, timeout_seconds=300),
-                rationale="Database dependency detected in project. RDS provides a managed PostgreSQL instance.",
-                assumptions=[
-                    "Database engine assumed to be PostgreSQL unless explicitly configured.",
-                    "Database is placed in a private subnet — not publicly accessible.",
-                ],
-            ))
+            components.append(_database_component(static_analysis or {}))
 
     elif has_docker:
         # Docker but not full-stack — ECS Fargate
@@ -465,17 +525,7 @@ def select_strategy(
             rationale="Amazon ECR stores the container image.",
         ))
         if has_db:
-            components.append(DeploymentComponent(
-                name="database",
-                component_type=ComponentType.managed_database,
-                target=DeploymentTarget.rds,
-                artifact_type=ArtifactType.none_required,
-                dependencies=[],
-                health_check_required=True,
-                health_check=HealthCheckSpec(protocol="tcp", port=5432, timeout_seconds=300),
-                rationale="Database dependency detected. RDS PostgreSQL in a private subnet.",
-                assumptions=["PostgreSQL assumed.", "Not publicly accessible."],
-            ))
+            components.append(_database_component(static_analysis or {}))
 
     else:
         # No Docker, no K8s, no clear static site — EC2 general workload
@@ -499,17 +549,7 @@ def select_strategy(
             ],
         ))
         if has_db:
-            components.append(DeploymentComponent(
-                name="database",
-                component_type=ComponentType.managed_database,
-                target=DeploymentTarget.rds,
-                artifact_type=ArtifactType.none_required,
-                dependencies=[],
-                health_check_required=True,
-                health_check=HealthCheckSpec(protocol="tcp", port=5432, timeout_seconds=300),
-                rationale="Database dependency detected. RDS PostgreSQL in a private subnet.",
-                assumptions=["PostgreSQL assumed.", "Not publicly accessible."],
-            ))
+            components.append(_database_component(static_analysis or {}))
 
     # ── Rough cost estimate ───────────────────────────────────────────────────
     cost = _estimate_cost(components)
@@ -557,6 +597,9 @@ def _estimate_cost(components: List[DeploymentComponent]) -> CostEstimate:
         elif t == DeploymentTarget.rds:
             low += 15.0; high += 60.0
             assumptions.append("RDS: db.t3.micro PostgreSQL, 20 GB storage, single-AZ.")
+        elif t == DeploymentTarget.documentdb:
+            low += 60.0; high += 90.0
+            assumptions.append("DocumentDB: one db.t4g.medium instance, storage and I/O billed separately.")
         elif t == DeploymentTarget.ecr:
             low += 0.5; high += 2.0
             assumptions.append("ECR: up to 1 GB image storage.")

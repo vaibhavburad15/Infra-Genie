@@ -20,8 +20,9 @@ import CostPage from '@/pages/CostPage';
 import ReportsPage from '@/pages/ReportsPage';
 import SettingsPage from '@/pages/SettingsPage';
 import CloudAccountsPage from '@/pages/CloudAccountsPage';
+import AnsiblePage from '@/pages/AnsiblePage';
 
-type Page = 'dashboard' | 'projects' | 'deployments' | 'agents' | 'monitoring' | 'insights' | 'pipelines' | 'security' | 'cost' | 'reports' | 'settings' | 'cloud-accounts';
+type Page = 'dashboard' | 'projects' | 'deployments' | 'ansible' | 'agents' | 'monitoring' | 'insights' | 'pipelines' | 'security' | 'cost' | 'reports' | 'settings' | 'cloud-accounts';
 
 /** Sub-page state for pages that need a selected-item context. */
 interface SubPageState {
@@ -35,6 +36,7 @@ const pageMeta: Record<Page, { title: string }> = {
   projects: { title: 'Projects' },
   pipelines: { title: 'Pipelines' },
   deployments: { title: 'Deployments' },
+  ansible: { title: 'Ansible' },
   agents: { title: 'AI Agents' },
   monitoring: { title: 'Monitoring' },
   security: { title: 'Security' },
@@ -180,6 +182,7 @@ function Dashboard() {
             onViewResults={openDeploymentResults}
           />
         );
+      case 'ansible': return <AnsiblePage />;
       case 'agents': return <AgentsPage />;
       case 'monitoring': return <MonitoringPage />;
       case 'security': return <SecurityPage />;

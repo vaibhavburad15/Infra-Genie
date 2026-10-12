@@ -59,6 +59,7 @@ import {
   type DeploymentStrategyResponse,
   type DeploymentStrategyComponent,
 } from '@/api';
+import DeploymentFailurePanel from '@/components/DeploymentFailurePanel';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -148,6 +149,7 @@ function targetLabel(target: string): string {
     s3_cloudfront: 'S3 + CloudFront',
     eks:           'Amazon EKS',
     rds:           'Amazon RDS',
+    documentdb:    'Amazon DocumentDB (MongoDB)',
     ecr:           'Amazon ECR',
     lambda:        'AWS Lambda',
   };
@@ -156,7 +158,7 @@ function targetLabel(target: string): string {
 
 function targetIcon(target: string) {
   if (target === 's3_cloudfront') return Globe;
-  if (target === 'rds')           return Database;
+  if (target === 'rds' || target === 'documentdb') return Database;
   if (target === 'ecr')           return Package;
   return Server;
 }
@@ -202,6 +204,7 @@ export default function DeploymentReviewPage({
   const [approvalBusy, setApprovalBusy]     = useState(false);
   const [approvalError, setApprovalError]   = useState('');
   const [applyBusy, setApplyBusy]           = useState(false);
+  const [applyQueued, setApplyQueued]       = useState(false);
   const [applyError, setApplyError]         = useState('');
   const [planOpen, setPlanOpen]             = useState(false);
   const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -239,11 +242,13 @@ export default function DeploymentReviewPage({
   // Auto-refresh while the worker is busy
   useEffect(() => {
     if (!deployment) return;
-    if (POLLING_STATUSES.has(deployment.status)) {
+    // After queuing apply, keep polling while the worker picks up the job.
+    if (POLLING_STATUSES.has(deployment.status)
+        || (applyQueued && deployment.status === 'approved')) {
       pollRef.current = setTimeout(() => void fetchData(true), 4000);
     }
     return () => { if (pollRef.current) clearTimeout(pollRef.current); };
-  }, [deployment, fetchData]);
+  }, [deployment, fetchData, applyQueued]);
 
   // ── Approval / rejection ──────────────────────────────────────────────────
 
@@ -273,6 +278,7 @@ export default function DeploymentReviewPage({
       setApplyBusy(true);
       setApplyError('');
       const updated = await applyDeployment(deployment.id);
+      setApplyQueued(true);
       setDeployment(updated);
       // Start polling immediately
       void fetchData(true);
@@ -437,8 +443,17 @@ export default function DeploymentReviewPage({
         </div>
       )}
 
-      {/* ── Failure detail for apply-phase failures ── */}
-      {isFailed && deployment.error_message && !isPlanning && (
+      {/* ── Failure: actual cause + one-click fixes ── */}
+      {isFailed && deployment.failure_details && !isPlanning && (
+        <DeploymentFailurePanel
+          deployment={deployment}
+          failure={deployment.failure_details}
+          onResolved={setDeployment}
+        />
+      )}
+
+      {/* ── Failure detail for older deployments without structured details ── */}
+      {isFailed && !deployment.failure_details && deployment.error_message && !isPlanning && (
         <div className="bg-red-50 border border-red-200 rounded-xl px-5 py-5">
           <div className="flex items-center gap-2 text-red-700 font-semibold text-sm mb-3">
             <AlertTriangle size={16} />
@@ -664,7 +679,7 @@ export default function DeploymentReviewPage({
       )}
 
       {/* ── Planning failure error ── */}
-      {(status === 'failed' || status === 'plan_failed') && plan.error_message && (
+      {(status === 'failed' || status === 'plan_failed') && !deployment.failure_details && plan.error_message && (
         <div className="bg-red-50 border border-red-200 rounded-xl px-5 py-4">
           <div className="flex items-center gap-2 text-red-700 font-semibold text-sm mb-2">
             <XCircle size={16} /> Deployment planning failed
@@ -717,7 +732,7 @@ export default function DeploymentReviewPage({
               Back to list
             </button>
             <button
-              disabled={applyBusy}
+              disabled={applyBusy || applyQueued}
               onClick={() => void handleApply()}
               className="flex items-center gap-2 px-6 py-2.5 rounded-xl bg-primary text-white text-sm font-semibold hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer transition-colors"
               aria-label="Deploy approved plan to AWS"
@@ -726,7 +741,7 @@ export default function DeploymentReviewPage({
                 ? <Loader size={15} className="animate-spin" />
                 : <Rocket size={15} />
               }
-              {applyBusy ? 'Queuing deployment…' : 'Deploy Approved Plan'}
+              {applyBusy || applyQueued ? 'Queuing deployment…' : 'Deploy Approved Plan'}
             </button>
           </div>
         </div>

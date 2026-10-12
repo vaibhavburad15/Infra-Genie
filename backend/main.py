@@ -22,10 +22,11 @@ from jose import JWTError, jwt
 from passlib.context import CryptContext
 
 from config import settings
+from pydantic import BaseModel
 from models import (
     init_db, get_db,
     User, Organization, Membership, Project, Deployment, CloudAccount,
-    Report, AuditLog,
+    Report, AuditLog, AnsibleRun,
     UserCreate, UserOut, TokenResponse, EmailOtpRequest, EmailOtpVerify,
     ProjectCreate, ProjectOut, DeploymentOut, ReportOut, ApproveDeployment, DeploymentCreate,
     OrganizationCreate, OrganizationOut, MembershipOut, MembershipInvite,
@@ -804,7 +805,7 @@ async def apply_deployment(
     if deployment.status != DeploymentStatus.approved:
         raise HTTPException(
             409,
-            f"Deployment is in '{deployment.status.value}' status. "
+            f"Deployment is in '{deployment.status.value if deployment.status else 'unknown'}' status. "
             "Only an APPROVED deployment can be applied.",
         )
 
@@ -875,6 +876,330 @@ async def apply_deployment(
     await db.commit()
     await db.refresh(deployment)
     return deployment
+
+
+class ResolveDeployment(BaseModel):
+    option: int  # index into deployment.failure_details["resolutions"]
+
+
+_RESOLVABLE_STATUSES = {
+    DeploymentStatus.failed, DeploymentStatus.apply_failed, DeploymentStatus.plan_failed,
+    DeploymentStatus.artifact_failed, DeploymentStatus.strategy_failed,
+    DeploymentStatus.application_deploy_failed, DeploymentStatus.verification_failed,
+}
+
+
+@app.post("/api/deployments/{deployment_id}/resolve", response_model=DeploymentOut,
+          status_code=202, tags=["deployments"])
+async def resolve_deployment(
+    deployment_id: UUID,
+    payload: ResolveDeployment,
+    current_user: User = Depends(require_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Apply one of the server-computed resolutions stored with a failure.
+
+    Only the index of a stored resolution is accepted, so clients cannot inject
+    arbitrary values into the Terraform workspace. Every resolution ends in a
+    new plan that must be reviewed and approved before anything is applied.
+    """
+    from deployment_errors import (
+        RESOLVE_DB_USERNAME, RESOLVE_RDS_VERSION, RESOLVE_REPLAN, RESOLVE_RETRY_PLAN, RESOLVE_S3_WEBSITE,
+    )
+    from deployment_planner import (
+        TerraformError, deployment_workspace, set_db_engine_version, set_db_username,
+    )
+    from tasks import task_replan_deployment
+
+    org = await resolve_current_org(current_user, db)
+    deployment = (await db.execute(select(Deployment).where(
+        Deployment.id == deployment_id,
+        Deployment.org_id == org.id,
+    ))).scalar_one_or_none()
+    if not deployment:
+        raise HTTPException(404, "Deployment not found")
+
+    if deployment.user_id and deployment.user_id != current_user.id:
+        membership = (await db.execute(select(Membership).where(
+            Membership.user_id == current_user.id,
+            Membership.org_id == org.id,
+        ))).scalar_one_or_none()
+        if not membership or membership.role not in (OrgRole.owner.value, OrgRole.admin.value):
+            raise HTTPException(403, "Only the deployment owner or an org admin can resolve this deployment.")
+
+    if deployment.status not in _RESOLVABLE_STATUSES:
+        status_label = deployment.status.value if deployment.status else "unknown"
+        raise HTTPException(409, f"Deployment is in '{status_label}' status and has nothing to resolve.")
+    resolutions = (deployment.failure_details or {}).get("resolutions") or []
+    if not 0 <= payload.option < len(resolutions):
+        raise HTTPException(400, "Unknown resolution option.")
+    option = resolutions[payload.option]
+
+    if option["id"] == RESOLVE_RDS_VERSION:
+        try:
+            files = set_db_engine_version(
+                deployment_workspace(deployment.id),
+                (option.get("params") or {}).get("resource"),
+                str((option.get("params") or {}).get("version")),
+            )
+        except TerraformError as exc:
+            raise HTTPException(409, str(exc))
+        artifacts = dict(deployment.artifacts or {})
+        terraform = dict(artifacts.get("terraform") or {})
+        terraform["files"] = files
+        artifacts["terraform"] = terraform
+        deployment.artifacts = artifacts
+        task = task_replan_deployment
+    elif option["id"] == RESOLVE_DB_USERNAME:
+        try:
+            files = set_db_username(
+                deployment_workspace(deployment.id),
+                str((option.get("params") or {}).get("username")),
+            )
+        except TerraformError as exc:
+            raise HTTPException(409, str(exc))
+        artifacts = dict(deployment.artifacts or {})
+        artifacts["terraform"] = {**(artifacts.get("terraform") or {}), "files": files}
+        deployment.artifacts = artifacts
+        task = task_replan_deployment
+    elif option["id"] == RESOLVE_S3_WEBSITE:
+        # Regenerate from the template with S3 website hosting instead of
+        # CloudFront. The bucket keeps its address, so it is reused.
+        deployment.artifacts = {**(deployment.artifacts or {}), "static_hosting": "s3_website"}
+        task = task_plan_deployment
+    elif option["id"] == RESOLVE_REPLAN:
+        task = task_replan_deployment
+    elif option["id"] == RESOLVE_RETRY_PLAN:
+        task = task_plan_deployment
+    else:
+        raise HTTPException(400, "Unsupported resolution.")
+
+    deployment.status = DeploymentStatus.planning
+    deployment.error_message = None
+    deployment.failure_details = None
+    deployment.approved_by = None
+    deployment.approved_at = None
+    deployment.updated_at = datetime.utcnow()
+    db.add(AuditLog(
+        org_id=org.id,
+        actor_id=current_user.id,
+        action="deployment.resolve",
+        target_type="deployment",
+        target_id=str(deployment.id),
+        metadata_json={"resolution": option.get("id"), "params": option.get("params") or {}},
+    ))
+    await db.commit()
+    try:
+        get_queue().enqueue(task, str(deployment.id), job_timeout=2400)
+    except Exception as exc:
+        deployment.status = DeploymentStatus.failed
+        deployment.error_message = "Could not queue the re-plan: " + str(exc)[:500]
+        await db.commit()
+        raise HTTPException(503, "Could not queue the re-plan. Check the worker and Redis.")
+    await db.refresh(deployment)
+    return deployment
+
+
+# ── Ansible (server configuration) ────────────────────────────────────────────
+
+class AnsibleRunCreate(BaseModel):
+    playbook: str
+
+
+async def _org_deployment(deployment_id: UUID, current_user: User, db: AsyncSession) -> Deployment:
+    org = await resolve_current_org(current_user, db)
+    deployment = (await db.execute(select(Deployment).where(
+        Deployment.id == deployment_id,
+        Deployment.org_id == org.id,
+    ))).scalar_one_or_none()
+    if not deployment:
+        raise HTTPException(404, "Deployment not found")
+    return deployment
+
+
+async def _require_deployment_admin(deployment: Deployment, current_user: User, db: AsyncSession) -> None:
+    """Owner of the deployment, or an org owner/admin."""
+    if deployment.user_id and deployment.user_id == current_user.id:
+        return
+    membership = (await db.execute(select(Membership).where(
+        Membership.user_id == current_user.id,
+        Membership.org_id == deployment.org_id,
+    ))).scalar_one_or_none()
+    if not membership or membership.role not in (OrgRole.owner.value, OrgRole.admin.value):
+        raise HTTPException(403, "Only the deployment owner or an org admin can run playbooks.")
+
+
+def _run_summary(run: AnsibleRun, include_log: bool = False) -> dict:
+    data = {
+        "id": str(run.id),
+        "deployment_id": str(run.deployment_id),
+        "playbook": run.playbook,
+        "status": run.status,
+        "trigger": run.trigger,
+        "return_code": run.return_code,
+        "recap": run.recap or {},
+        "created_at": run.created_at.isoformat() + "Z" if run.created_at else None,
+        "started_at": run.started_at.isoformat() + "Z" if run.started_at else None,
+        "finished_at": run.finished_at.isoformat() + "Z" if run.finished_at else None,
+    }
+    if include_log:
+        data["log"] = run.log or ""
+    return data
+
+
+@app.get("/api/ansible/deployments", tags=["ansible"])
+async def list_ansible_deployments(
+    current_user: User = Depends(require_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Deployments whose servers are configured with Ansible."""
+    from ansible_engine import has_ansible
+    from deployment_planner import deployment_workspace
+
+    org = await resolve_current_org(current_user, db)
+    rows = (await db.execute(
+        select(Deployment, Project.name)
+        .join(Project, Project.id == Deployment.project_id)
+        .where(Deployment.org_id == org.id)
+        .order_by(Deployment.created_at.desc())
+    )).all()
+    result = []
+    for deployment, project_name in rows:
+        if not has_ansible(deployment_workspace(deployment.id)):
+            continue
+        last = (await db.execute(
+            select(AnsibleRun).where(AnsibleRun.deployment_id == deployment.id)
+            .order_by(AnsibleRun.created_at.desc()).limit(1)
+        )).scalar_one_or_none()
+        result.append({
+            "deployment_id": str(deployment.id),
+            "project_name": project_name,
+            "status": deployment.status.value if deployment.status else None,
+            "region": deployment.region,
+            "server_ip": (deployment.deployment_outputs or {}).get("instance_public_ip"),
+            "last_run": _run_summary(last) if last else None,
+        })
+    return result
+
+
+@app.get("/api/deployments/{deployment_id}/ansible", tags=["ansible"])
+async def get_deployment_ansible(
+    deployment_id: UUID,
+    current_user: User = Depends(require_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Ansible files, built-in playbooks and run history for one deployment."""
+    from ansible_engine import BUILTIN_PLAYBOOKS, SSH_USER, has_ansible, list_files
+    from deployment_planner import deployment_workspace
+
+    deployment = await _org_deployment(deployment_id, current_user, db)
+    workspace = deployment_workspace(deployment.id)
+    if not has_ansible(workspace):
+        raise HTTPException(404, "This deployment has no Ansible configuration.")
+    project = (await db.execute(select(Project).where(Project.id == deployment.project_id))).scalar_one()
+    runs = (await db.execute(
+        select(AnsibleRun).where(AnsibleRun.deployment_id == deployment.id)
+        .order_by(AnsibleRun.created_at.desc()).limit(30)
+    )).scalars().all()
+    host = (deployment.deployment_outputs or {}).get("instance_public_ip")
+    active = any(r.status in ("queued", "running") for r in runs)
+    return {
+        "deployment_id": str(deployment.id),
+        "project_name": project.name,
+        "status": deployment.status.value if deployment.status else None,
+        "server": {"host": host, "user": SSH_USER} if host else None,
+        "files": list_files(workspace),
+        "playbooks": [{"id": key, **meta} for key, meta in BUILTIN_PLAYBOOKS.items()],
+        "runs": [_run_summary(r) for r in runs],
+        "can_run": bool(host) and not active,
+        "run_blocked_reason": (
+            None if host and not active
+            else "A playbook is already running." if active
+            else "The server is created when the deployment is applied."
+        ),
+    }
+
+
+@app.get("/api/deployments/{deployment_id}/ansible/file", tags=["ansible"])
+async def get_deployment_ansible_file(
+    deployment_id: UUID,
+    path: str,
+    current_user: User = Depends(require_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Content of one Ansible file (secrets redacted, SSH key never served)."""
+    from ansible_engine import AnsibleError, read_file
+    from deployment_planner import deployment_workspace
+
+    deployment = await _org_deployment(deployment_id, current_user, db)
+    try:
+        return {"path": path, "content": read_file(deployment_workspace(deployment.id), path)}
+    except AnsibleError as exc:
+        raise HTTPException(404, str(exc))
+
+
+@app.post("/api/deployments/{deployment_id}/ansible/runs", status_code=202, tags=["ansible"])
+async def start_ansible_run(
+    deployment_id: UUID,
+    payload: AnsibleRunCreate,
+    current_user: User = Depends(require_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Queue one of the built-in playbooks against the deployment's servers."""
+    from ansible_engine import BUILTIN_PLAYBOOKS, has_ansible
+    from deployment_planner import deployment_workspace
+    from tasks import task_run_ansible
+
+    deployment = await _org_deployment(deployment_id, current_user, db)
+    await _require_deployment_admin(deployment, current_user, db)
+    if payload.playbook not in BUILTIN_PLAYBOOKS:
+        raise HTTPException(400, "Unknown playbook.")
+    if not has_ansible(deployment_workspace(deployment.id)):
+        raise HTTPException(404, "This deployment has no Ansible configuration.")
+    if not (deployment.deployment_outputs or {}).get("instance_public_ip"):
+        raise HTTPException(409, "The server is created when the deployment is applied.")
+    active = (await db.execute(select(AnsibleRun).where(
+        AnsibleRun.deployment_id == deployment.id,
+        AnsibleRun.status.in_(["queued", "running"]),
+    ))).scalars().first()
+    if active:
+        raise HTTPException(409, "A playbook is already running for this deployment.")
+
+    run = AnsibleRun(deployment_id=deployment.id, org_id=deployment.org_id, playbook=payload.playbook,
+                     status="queued", triggered_by=current_user.id, trigger="manual")
+    db.add(run)
+    db.add(AuditLog(
+        org_id=deployment.org_id,
+        actor_id=current_user.id,
+        action="ansible.run",
+        target_type="deployment",
+        target_id=str(deployment.id),
+        metadata_json={"playbook": payload.playbook},
+    ))
+    await db.commit()
+    await db.refresh(run)
+    try:
+        get_queue().enqueue(task_run_ansible, str(run.id), job_timeout=3700)
+    except Exception as exc:
+        run.status = "failed"
+        run.log = "Could not queue the playbook: " + str(exc)[:500]
+        await db.commit()
+        raise HTTPException(503, "Could not queue the playbook. Check the worker and Redis.")
+    return _run_summary(run)
+
+
+@app.get("/api/ansible/runs/{run_id}", tags=["ansible"])
+async def get_ansible_run(
+    run_id: UUID,
+    current_user: User = Depends(require_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """One run with its (live) log."""
+    run = (await db.execute(select(AnsibleRun).where(AnsibleRun.id == run_id))).scalar_one_or_none()
+    if not run:
+        raise HTTPException(404, "Run not found")
+    await _org_deployment(run.deployment_id, current_user, db)
+    return _run_summary(run, include_log=True)
 
 
 @app.get("/api/deployments/{deployment_id}/strategy", tags=["deployments"])

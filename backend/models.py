@@ -323,6 +323,8 @@ class Deployment(Base):
     app_deploy_status: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     verification_status: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     verification_results: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON, nullable=True)
+    # Structured failure (title, actual error, suggestion, one-click resolutions).
+    failure_details: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON, nullable=True)
 
     created_at: Mapped[Optional[datetime]] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -342,6 +344,27 @@ class Report(Base):
     created_at: Mapped[Optional[datetime]] = mapped_column(DateTime, default=datetime.utcnow)
 
     project: Mapped["Project"] = relationship(back_populates="reports")
+
+
+class AnsibleRun(Base):
+    """One execution of a built-in Ansible playbook against a deployment's servers."""
+    __tablename__ = "ansible_runs"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    deployment_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("deployments.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    org_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=True)
+    playbook: Mapped[str] = mapped_column(String(60), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="queued")  # queued|running|succeeded|failed
+    triggered_by: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    trigger: Mapped[str] = mapped_column(String(20), nullable=False, default="manual")  # manual|deployment
+    return_code: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    recap: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON, nullable=True)  # PLAY RECAP per host
+    log: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[Optional[datetime]] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
 
 class AuditLog(Base):
@@ -536,6 +559,7 @@ class DeploymentOut(BaseModel):
     app_deploy_status: Optional[str] = None
     verification_status: Optional[str] = None
     verification_results: Optional[dict] = None
+    failure_details: Optional[dict] = None
 
     @field_serializer('approved_at', 'plan_created_at', 'started_at', 'completed_at',
                       'apply_started_at', 'created_at', 'updated_at', mode='plain')

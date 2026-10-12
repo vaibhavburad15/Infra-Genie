@@ -1,6 +1,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -725,6 +726,352 @@ def validate_terraform_artifact(
     return {"files": files, "resource_specifications": specifications}
 
 
+# Literal name attributes that must carry the per-deployment resource prefix.
+# A unique prefix keeps a failed or parallel deployment from colliding with
+# resources another deployment already created in the same account.
+_PREFIXED_NAME_ATTRIBUTES = {
+    "aws_lb": "name",
+    "aws_lb_target_group": "name",
+    "aws_security_group": "name",
+    "aws_ecs_cluster": "name",
+    "aws_ecs_service": "name",
+    "aws_ecs_task_definition": "family",
+    "aws_ecr_repository": "name",
+    "aws_iam_role": "name",
+    "aws_db_instance": "identifier",
+    "aws_db_subnet_group": "name",
+    "aws_elasticache_cluster": "cluster_id",
+    "aws_elasticache_replication_group": "replication_group_id",
+    "aws_elasticache_subnet_group": "name",
+}
+_AWS_NAME_LIMITS = {"aws_lb": 32, "aws_lb_target_group": 32, "aws_elasticache_cluster": 50}
+
+
+def _resources_by_type(source: str) -> dict[str, list[tuple[str, str]]]:
+    """Map resource type -> [(name, body)] for every resource block in source."""
+    found: dict[str, list[tuple[str, str]]] = {}
+    for match in _RESOURCE_DECLARATION.finditer(source):
+        found.setdefault(match.group(1).lower(), []).append(
+            (match.group(2), _resource_block_body(source, match))
+        )
+    return found
+
+
+def _port_rule(body: str) -> tuple[str, str, str]:
+    """(from_port, to_port, protocol) of an ingress block or rule resource."""
+    def attr(pattern: str, default: str) -> str:
+        match = re.search(pattern, body)
+        return match.group(1) if match else default
+    return (
+        attr(r"from_port\s*=\s*(\d+)", "0"),
+        attr(r"to_port\s*=\s*(\d+)", "0"),
+        attr(r'(?:ip_)?protocol\s*=\s*"([^"]+)"', "tcp"),
+    )
+
+
+def _ingress_covers(port: int, sg_name: str, sg_body: str,
+                    resources: dict[str, list[tuple[str, str]]]) -> bool:
+    """True when the security group (inline or via rule resources) admits `port`."""
+    ranges = [
+        _port_rule(block.group(1))
+        for block in re.finditer(r"\bingress\s*\{(.*?)\}", sg_body, re.DOTALL)
+    ]
+    sg_ref = re.compile(rf"aws_security_group\.{re.escape(sg_name)}\.id")
+    for kind in ("aws_security_group_rule", "aws_vpc_security_group_ingress_rule"):
+        for _, body in resources.get(kind, []):
+            if kind == "aws_security_group_rule" and not re.search(r'type\s*=\s*"ingress"', body):
+                continue
+            if not re.search(rf"security_group_id\s*=\s*{sg_ref.pattern}", body):
+                continue
+            ranges.append(_port_rule(body))
+    for low, high, protocol in ranges:
+        if protocol == "-1" or int(low) <= port <= max(int(low), int(high)):
+            return True
+    return False
+
+
+def check_terraform_semantics(files: dict[str, str], context: dict[str, Any]) -> list[str]:
+    """Deterministic checks for mistakes `terraform validate` cannot see but that
+    make `terraform apply` fail or leave the application unreachable.
+
+    Returns every problem found so the generator can fix them in one retry.
+    """
+    source = "\n\n".join(files.values())
+    resources = _resources_by_type(source)
+    issues: list[str] = []
+
+    def refs(body: str) -> set[str]:
+        return set(re.findall(r"aws_security_group\.([A-Za-z0-9_-]+)\.id", body))
+
+    # ── ECS on Fargate / awsvpc ───────────────────────────────────────────────
+    task_defs = resources.get("aws_ecs_task_definition", [])
+    awsvpc = any(
+        re.search(r'network_mode\s*=\s*"awsvpc"|"FARGATE"', body) for _, body in task_defs
+    )
+    if awsvpc:
+        for name, body in resources.get("aws_lb_target_group", []):
+            if not re.search(r'target_type\s*=\s*"ip"', body):
+                issues.append(
+                    f'aws_lb_target_group.{name} must set target_type = "ip": ECS tasks using '
+                    'awsvpc networking cannot register with the default "instance" target type.'
+                )
+        for name, body in task_defs:
+            if not re.search(r"\bexecution_role_arn\s*=", body):
+                issues.append(
+                    f"aws_ecs_task_definition.{name} must set execution_role_arn to an aws_iam_role "
+                    "trusted by ecs-tasks.amazonaws.com with the AmazonECSTaskExecutionRolePolicy "
+                    "attached, otherwise Fargate cannot pull the image from ECR or write logs."
+                )
+        if not resources.get("aws_nat_gateway"):
+            for name, body in resources.get("aws_ecs_service", []):
+                if not re.search(r"assign_public_ip\s*=\s*true", body):
+                    issues.append(
+                        f"aws_ecs_service.{name} must set assign_public_ip = true in "
+                        "network_configuration: the subnets have no NAT gateway, so tasks "
+                        "cannot reach ECR without a public IP."
+                    )
+
+    # ── Infrastructure matches the validated strategy ─────────────────────────
+    raw_strategy = context.get("strategy")
+    strategy: dict[str, Any] = raw_strategy if isinstance(raw_strategy, dict) else {}
+    targets = {str(c.get("target")) for c in strategy.get("components") or []}
+    targets.add(str(strategy.get("primary_target") or ""))
+    expected = {
+        "ecs_fargate": ("aws_ecs_service", "aws_ecs_task_definition", "aws_ecs_cluster"),
+        "ecr": ("aws_ecr_repository",),
+        "ec2": ("aws_instance",),
+    }
+    for target, kinds in expected.items():
+        if target not in targets:
+            continue
+        missing_kinds = [kind for kind in kinds if not resources.get(kind)]
+        if missing_kinds:
+            issues.append(
+                f"The deployment strategy targets {target}, but the configuration has no "
+                f"{', '.join(missing_kinds)}. Implement the strategy's targets exactly."
+            )
+    if "ecs_fargate" not in targets and resources.get("aws_ecs_service"):
+        issues.append(
+            "The configuration creates an ECS service, but the deployment strategy does not "
+            "target ecs_fargate. Implement the strategy's targets exactly."
+        )
+
+    # ── Load balancer reachability ────────────────────────────────────────────
+    lb_sgs: set[str] = set()
+    for _, body in resources.get("aws_lb", []):
+        lb_sgs |= refs(body)
+    service_sgs: set[str] = set()
+    for _, body in resources.get("aws_ecs_service", []):
+        service_sgs |= refs(body)
+    shared = sorted(lb_sgs & service_sgs)
+    if shared:
+        issues.append(
+            "The load balancer and the ECS service share security group(s) "
+            f"{', '.join('aws_security_group.' + s for s in shared)}. Use one security group "
+            "for the load balancer (ingress on the listener port from 0.0.0.0/0) and a separate "
+            "one for the service (ingress on the container port only from the load balancer's "
+            "security group)."
+        )
+    listener_ports = {
+        int(port)
+        for _, body in resources.get("aws_lb_listener", [])
+        for port in re.findall(r'^\s*port\s*=\s*"?(\d+)"?', body, re.MULTILINE)
+    }
+    sg_bodies = dict(resources.get("aws_security_group", []))
+    for sg in sorted(lb_sgs):
+        if sg not in sg_bodies:
+            continue
+        for port in sorted(listener_ports):
+            if not _ingress_covers(port, sg, sg_bodies[sg], resources):
+                issues.append(
+                    f"aws_security_group.{sg} is attached to the load balancer but does not allow "
+                    f"inbound traffic on listener port {port}."
+                )
+
+    # ── Data services the application needs ───────────────────────────────────
+    needs = set(context.get("required_data_services") or [])
+    if needs & {"postgres", "mysql"} and not (
+        resources.get("aws_db_instance") or resources.get("aws_rds_cluster")
+    ):
+        engine = "postgres" if "postgres" in needs else "mysql"
+        issues.append(
+            f"The application uses a {engine} database but no aws_db_instance was generated. "
+            "Add an RDS instance (with an aws_db_subnet_group and a security group admitting "
+            "the database port only from the ECS service security group) and pass its "
+            "connection URL to the container."
+        )
+    if "redis" in needs and not (
+        resources.get("aws_elasticache_cluster")
+        or resources.get("aws_elasticache_replication_group")
+    ):
+        issues.append(
+            "The application uses Redis but no aws_elasticache_cluster was generated. Add a "
+            "single-node ElastiCache Redis cluster (with an aws_elasticache_subnet_group and a "
+            "security group admitting 6379 only from the ECS service security group) and pass "
+            "its URL to the container."
+        )
+    if "mongodb" in needs and not resources.get("aws_docdb_cluster"):
+        issues.append(
+            "The application uses MongoDB but no aws_docdb_cluster was generated. RDS has no "
+            "MongoDB engine: add an Amazon DocumentDB cluster (engine_version \"5.0.0\") with one "
+            "db.t4g.medium aws_docdb_cluster_instance, an aws_docdb_subnet_group, a security "
+            "group admitting 27017 only from the application, and pass its connection string "
+            "(retryWrites=false) to the container as MONGODB_URI."
+        )
+    # Managed data services cost money every hour: only create what the app uses.
+    if "mongodb" not in needs and resources.get("aws_docdb_cluster"):
+        issues.append(
+            "Remove the DocumentDB resources: required_data_services does not include mongodb."
+        )
+    if "redis" not in needs and (
+        resources.get("aws_elasticache_cluster") or resources.get("aws_elasticache_replication_group")
+    ):
+        issues.append(
+            "Remove the ElastiCache resources: required_data_services does not include redis."
+        )
+    if not needs & {"postgres", "mysql"} and (
+        resources.get("aws_db_instance") or resources.get("aws_rds_cluster")
+    ):
+        issues.append(
+            "Remove the RDS resources: required_data_services does not include a relational database."
+        )
+    for kind in ("aws_db_instance", "aws_rds_cluster"):
+        for name, body in resources.get(kind, []):
+            # AWS retires minor versions regularly (e.g. postgres 15.8), so a
+            # pinned minor version eventually fails CreateDBInstance. A major
+            # version lets RDS choose the current default minor version.
+            version = re.search(r'\bengine_version\s*=\s*"([^"]+)"', body)
+            engine = re.search(r'\bengine\s*=\s*"([^"]+)"', body)
+            major_only = r"\d+" if engine and "postgres" in engine.group(1) else r"\d+(?:\.\d+)?"
+            if version and not re.fullmatch(major_only, version.group(1)):
+                issues.append(
+                    f'{kind}.{name} pins engine_version "{version.group(1)}". Use the major '
+                    'version only (for example "16" for postgres, "8.0" for mysql) so RDS picks '
+                    "a minor version that is currently available, and omit parameter_group_name."
+                )
+            if re.search(r'\b(?:password|master_password)\s*=\s*"', body):
+                issues.append(
+                    f"{kind}.{name} hardcodes the database password. Declare "
+                    'variable "db_password" { type = string, sensitive = true } without a '
+                    "default and use var.db_password; the platform supplies the value."
+                )
+            if re.search(r'\b(?:username|master_username)\s*=\s*"', body):
+                issues.append(
+                    f"{kind}.{name} hardcodes the database username. Use var.db_username; "
+                    'the platform supplies a valid value ("admin" and "postgres" are reserved).'
+                )
+    for env_name in re.findall(r'name\s*=\s*"([A-Za-z_]\w*)"\s*,?\s*value\s*=\s*""', source):
+        issues.append(
+            f"Container environment variable {env_name} is set to an empty string. Build it "
+            "from the generated resources (for example the RDS or ElastiCache endpoint) or "
+            "remove it."
+        )
+
+    # ── Outputs consumed by the application deployment step ───────────────────
+    declared_outputs = set(re.findall(r'\boutput\s+"([^"]+)"', source))
+    missing_outputs = [o for o in context.get("required_outputs") or [] if o not in declared_outputs]
+    if missing_outputs:
+        issues.append(
+            "Missing required Terraform outputs: " + ", ".join(missing_outputs) + ". "
+            "Declare an output block for each."
+        )
+
+    # ── Unique names per deployment ───────────────────────────────────────────
+    prefix = str(context.get("resource_name_prefix") or "")
+    for kind, attribute in _PREFIXED_NAME_ATTRIBUTES.items():
+        for name, body in resources.get(kind, []):
+            match = re.search(rf'^\s*{attribute}\s*=\s*"([^"$]*)"', body, re.MULTILINE)
+            if not match:
+                continue
+            value = match.group(1)
+            if prefix and not value.startswith(prefix):
+                issues.append(
+                    f'{kind}.{name} {attribute} "{value}" must start with "{prefix}" so it '
+                    "does not collide with resources from other deployments."
+                )
+            limit = _AWS_NAME_LIMITS.get(kind)
+            if limit and len(value) > limit:
+                issues.append(f'{kind}.{name} {attribute} "{value}" exceeds the AWS limit of {limit} characters.')
+    return issues
+
+
+def _with_plugin_cache(env: dict[str, str]) -> dict[str, str]:
+    """Share one provider cache across all workspaces.
+
+    The AWS provider binary is ~700 MB; without a cache every deployment
+    downloads it again during `terraform init` (minutes). Terraform >= 1.4
+    ignores the cache for a workspace without a lock file unless
+    TF_PLUGIN_CACHE_MAY_BREAK_DEPENDENCY_LOCK_FILE is set; the lock file then
+    records this worker's platform checksum only, which is all it runs on.
+    """
+    cache = settings.resolved_artifact_dir / "plugin-cache"
+    cache.mkdir(parents=True, exist_ok=True)
+    return {
+        **env,
+        "TF_PLUGIN_CACHE_DIR": str(cache),
+        "TF_PLUGIN_CACHE_MAY_BREAK_DEPENDENCY_LOCK_FILE": "true",
+        "TF_IN_AUTOMATION": "1",
+    }
+
+
+def terraform_validate_files(files: dict[str, str]) -> list[str]:
+    """Run `terraform init` + `terraform validate` on generated files in a
+    scratch directory and return the diagnostics as readable strings.
+
+    No AWS credentials are needed: init uses -backend=false and validate is
+    offline. Providers are cached across runs via TF_PLUGIN_CACHE_DIR.
+    """
+    import uuid as _uuid
+
+    root = settings.resolved_artifact_dir
+    scratch = root / "validation" / _uuid.uuid4().hex
+    scratch.mkdir(parents=True, exist_ok=True)
+    env = _with_plugin_cache({
+        key: value for key, value in os.environ.items()
+        if not key.startswith("AWS_")
+    })
+    try:
+        for filename, content in files.items():
+            (scratch / filename).write_text(content.rstrip() + "\n", encoding="utf-8")
+        try:
+            _terraform_command(
+                ["init", "-input=false", "-no-color", "-backend=false"], scratch, env, 900
+            )
+        except TerraformError as exc:
+            if exc.error_kind != "init_failed":
+                raise
+            return ["terraform init failed: " + str(exc)[-1500:]]
+        executable = shutil.which("terraform") or "terraform"
+        result = subprocess.run(
+            [executable, "validate", "-json", "-no-color"],
+            cwd=str(scratch), env=env, capture_output=True, text=True,
+            timeout=180, check=False,
+        )
+        try:
+            report = json.loads(result.stdout or "{}")
+        except json.JSONDecodeError:
+            report = {}
+        diagnostics = [
+            d for d in report.get("diagnostics") or [] if d.get("severity") == "error"
+        ]
+        if not diagnostics and result.returncode == 0:
+            return []
+        if not diagnostics:
+            return ["terraform validate failed: " + (result.stderr or result.stdout)[-1500:]]
+        messages = []
+        for diag in diagnostics:
+            where = diag.get("range") or {}
+            location = (
+                f"{where.get('filename')}:{(where.get('start') or {}).get('line')}: "
+                if where.get("filename") else ""
+            )
+            detail = (diag.get("detail") or "").strip()
+            messages.append(f"{location}{diag.get('summary', 'error')}" + (f" — {detail}" if detail else ""))
+        return messages
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+
+
 async def generate_terraform_artifacts(
     context: dict[str, Any],
     *,
@@ -733,8 +1080,33 @@ async def generate_terraform_artifacts(
 ) -> dict[str, Any]:
     """Run the Terraform agent with validation feedback, stopping after 3 tries."""
     from agents import terraform_agent
+    from llm import LLMUnavailableError
 
     agent = generate_once or terraform_agent
+
+    # Fast path: standard shapes use a vetted template (instant, apply-safe).
+    # The LLM generator remains the path for everything else, and the
+    # fallback if a template ever fails validation.
+    if generate_once is None:
+        from terraform_templates import render
+        templated = render(context)
+        if templated:
+            try:
+                validated = validate_terraform_artifact(
+                    templated,
+                    region=str((context.get("deployment") or {}).get("region") or ""),
+                    required_components=context.get("required_application_components") or [],
+                )
+                issues = check_terraform_semantics(validated["files"], context)
+                if not issues:
+                    logger.info("[DEPLOYMENT] terraform_artifact_templated")
+                    return validated
+                logger.warning("[DEPLOYMENT] terraform_template_rejected | issues=%s", issues)
+            except TerraformError as exc:
+                logger.warning("[DEPLOYMENT] terraform_template_rejected | error=%s", exc)
+
+    # Only the previous attempt's errors are fed back: earlier ones were
+    # already addressed (or repeated) by the attempt that followed them.
     errors: list[str] = []
     for attempt in range(1, max_attempts + 1):
         agent_state = {
@@ -749,16 +1121,33 @@ async def generate_terraform_artifacts(
                 region=str((context.get("deployment") or {}).get("region") or ""),
                 required_components=context.get("required_application_components") or [],
             )
-            logger.info("[DEPLOYMENT] terraform_artifact_generated | attempt=%d", attempt)
-            return validated
+            errors = check_terraform_semantics(validated["files"], context)
+            if not errors:
+                errors = await asyncio.to_thread(terraform_validate_files, validated["files"])
+            if not errors:
+                logger.info("[DEPLOYMENT] terraform_artifact_generated | attempt=%d", attempt)
+                return validated
+            logger.warning(
+                "[DEPLOYMENT] terraform_artifact_generation_retry | attempt=%d | error=%s",
+                attempt, "; ".join(errors)[:500],
+            )
+        except LLMUnavailableError as exc:
+            # The model server is down / misconfigured: retrying the same call
+            # cannot help, and wrapping it as a parse error hides the cause.
+            raise TerraformError(
+                str(exc), error_kind="llm_unavailable", stage="artifact_generation",
+                user_message=str(exc),
+            ) from exc
         except TerraformError as exc:
-            errors.append(str(exc))
+            if exc.error_kind == "missing_binary":
+                raise
+            errors = [str(exc)]
             logger.warning(
                 "[DEPLOYMENT] terraform_artifact_generation_retry | attempt=%d | error=%s",
                 attempt, str(exc)[:500],
             )
         except Exception as exc:
-            errors.append(f"Generation response could not be parsed: {exc}")
+            errors = [f"Generation response could not be parsed: {exc}"]
             logger.warning(
                 "[DEPLOYMENT] terraform_artifact_generation_retry | attempt=%d | error=%s",
                 attempt, str(exc)[:500],
@@ -862,14 +1251,92 @@ def _terraform_variable_values(source: str, project_name: str, region: str,
         "public_subnet_ids": [s.get("subnet_id") for s in selected_subnets[:2] if s.get("subnet_id")],
         "availability_zone": (selected_subnets[0] if selected_subnets else {}).get("availability_zone"),
     }
+    # Database credentials are generated here, never by the model. RDS master
+    # passwords may not contain / @ " or spaces, so stay alphanumeric. The
+    # value lives only in this workspace's terraform.tfvars and state.
+    if re.search(r'\bvariable\s+"(?:db_password|database_password)"', source):
+        import secrets
+        import string
+        alphabet = string.ascii_letters + string.digits
+        password = "".join(secrets.choice(alphabet) for _ in range(32))
+        db_name = re.sub(r"[^a-z0-9]", "", project_slug)
+        if not db_name or not db_name[0].isalpha():
+            db_name = "app" + db_name
+        defaults.update({
+            "db_password": password,
+            "database_password": password,
+            "db_username": "appadmin",
+            "database_username": "appadmin",
+            "db_name": db_name[:30],
+        })
+    if re.search(r'\bvariable\s+"docdb_password"', source):
+        import secrets
+        import string
+        alphabet = string.ascii_letters + string.digits
+        docdb_name = re.sub(r"[^a-z0-9]", "", project_slug) or "app"
+        defaults.update({
+            "docdb_password": "".join(secrets.choice(alphabet) for _ in range(32)),
+            "docdb_username": "appadmin",
+            "docdb_name": docdb_name[:30],
+        })
+    # Credentials are always supplied by the platform, even when generated
+    # Terraform declares a default: a model-chosen default such as "admin" is
+    # a reserved RDS master username, and a default password would be guessable.
+    platform_owned = {
+        "db_password", "database_password", "db_username", "database_username", "db_name",
+        "docdb_password", "docdb_username", "docdb_name",
+    }
     values: dict[str, Any] = {}
     for match in re.finditer(r'\bvariable\s+"([^"]+)"\s*\{(.*?)\n\}', source, re.DOTALL):
         name, body = match.group(1), match.group(2)
-        if re.search(r"\bdefault\s*=", body):
+        if re.search(r"\bdefault\s*=", body) and name not in platform_owned:
             continue
         if name in defaults and defaults[name] is not None:
             values[name] = defaults[name]
     return values
+
+
+def resource_name_prefix(project_name: str, deployment_id: str | UUID) -> str:
+    """Short, AWS-safe prefix unique to one deployment, e.g. "zxxcv-3b66a5".
+
+    Lowercase letters/digits/hyphens and starting with a letter satisfies the
+    strictest naming rules among the resources we generate (RDS identifiers),
+    and leaves room under the 32-character ALB / target group limit.
+    """
+    slug = re.sub(r"[^a-z0-9]", "", project_name.lower())
+    if not slug or not slug[0].isalpha():
+        slug = "app" + slug
+    return f"{slug[:10]}-{str(deployment_id).replace('-', '')[:6]}"
+
+
+def _detect_data_services(analysis: dict[str, Any], targets: set[str]) -> set[str]:
+    """Databases / caches the application depends on, from static analysis.
+
+    Only strategies with server-side compute can use one: a static site served
+    from S3 cannot open a database connection, whatever the analysis says.
+    """
+    if not targets & {"ecs_fargate", "ec2", "rds", "documentdb"}:
+        return set()
+    static = analysis.get("static") or {}
+    containerization = static.get("containerization") or {}
+    evidence = json.dumps([
+        static.get("databases_orms"),
+        containerization.get("databases_detected_from_compose"),
+        containerization.get("docker_services"),
+    ], default=str).lower()
+    services: set[str] = set()
+    if "postgres" in evidence:
+        services.add("postgres")
+    elif "mysql" in evidence or "mariadb" in evidence:
+        services.add("mysql")
+    elif "mongo" in evidence or "documentdb" in targets:
+        # RDS has no MongoDB engine: MongoDB apps get Amazon DocumentDB.
+        services.add("mongodb")
+    elif "rds" in targets or analysis.get("has_database"):
+        services.add("postgres")
+    if "redis" in evidence:
+        services.add("redis")
+    return services
 
 
 def build_terraform_generation_context(
@@ -936,13 +1403,66 @@ def build_terraform_generation_context(
         )),
         "ecr_repositories": records("ecr_repositories", ("name", "uri")),
     }
+    strategy_json = getattr(deployment, "strategy_json", None) or {}
+    targets = {
+        str(c.get("target")) for c in strategy_json.get("components") or [] if isinstance(c, dict)
+    }
+    targets.add(str(strategy_json.get("primary_target") or ""))
+    data_services = _detect_data_services(analysis, targets)
+    required_outputs: list[str] = []
+    if "ecs_fargate" in targets:
+        required_outputs += ["ecs_cluster_name", "ecs_service_name", "alb_dns_name"]
+    if "ec2" in targets:
+        required_outputs.append("instance_public_ip")
+    if "ecr" in targets or "ecs_fargate" in targets:
+        required_outputs.append("ecr_repository_url")
+    if data_services & {"postgres", "mysql"}:
+        required_outputs.append("db_endpoint")
+    if "redis" in data_services:
+        required_outputs.append("redis_endpoint")
+    if "mongodb" in data_services:
+        required_outputs.append("mongodb_endpoint")
+    static_hosting = artifacts.get("static_hosting") or "cloudfront"
+    if "s3_cloudfront" in targets:
+        required_outputs.append("s3_bucket_name")
+        required_outputs += (
+            ["website_url"] if static_hosting == "s3_website"
+            else ["cloudfront_distribution_id", "cloudfront_domain_name"]
+        )
+    health_check_path = next(
+        (str((c.get("health_check") or {}).get("path"))
+         for c in strategy_json.get("components") or []
+         if isinstance(c, dict) and c.get("target") == "ecs_fargate"
+         and (c.get("health_check") or {}).get("path")),
+        "/",
+    )
+    container_port = next(
+        (int(app["port"]) for app in applications
+         if isinstance(app, dict) and str(app.get("port") or "").isdigit()),
+        8000,
+    )
+
     return {
         "project_name": project.name,
         "project_id": str(project.id),
+        "resource_name_prefix": resource_name_prefix(project.name, deployment.id),
+        "required_data_services": sorted(data_services),
+        "required_outputs": required_outputs,
+        "container_port": container_port,
+        "health_check_path": health_check_path,
+        "static_hosting": static_hosting,
         "source_code_summary": source_summary,
         "analysis": analysis,
         "architecture": architecture,
-        "strategy": artifacts.get("strategy") or analysis.get("recommended_strategy"),
+        # The validated deployment strategy decides the AWS targets; the raw
+        # analysis hint is only used for legacy deployments without one.
+        "strategy": {
+            "primary_target": strategy_json.get("primary_target"),
+            "components": [
+                {k: c.get(k) for k in ("name", "target", "component_type", "exposed_ports")}
+                for c in strategy_json.get("components") or [] if isinstance(c, dict)
+            ],
+        } if strategy_json else (artifacts.get("strategy") or analysis.get("recommended_strategy")),
         "discovered_apps": applications,
         "required_application_components": required_components,
         "deployment": {
@@ -1154,6 +1674,64 @@ def assume_role_environment(cloud_account: Any) -> dict[str, str]:
     return env
 
 
+def set_db_engine_version(workspace: Path, resource_address: str | None, version: str) -> dict[str, str]:
+    """Set engine_version on an aws_db_instance in the workspace and drop its
+    parameter_group_name (a parameter group is tied to one major version).
+
+    Returns the patched {filename: content} map. Raises TerraformError when the
+    resource cannot be found or the version is malformed.
+    """
+    if not re.fullmatch(r"\d+(?:\.\d+)?", version or ""):
+        raise TerraformError(f"Invalid engine version {version!r}.", error_kind="workspace_error")
+    wanted = (resource_address or "").split(".", 1)[-1] if resource_address else None
+    terraform_dir = workspace / "terraform"
+    for path in sorted(terraform_dir.glob("*.tf")):
+        source = path.read_text(encoding="utf-8")
+        for match in _RESOURCE_DECLARATION.finditer(source):
+            if match.group(1).lower() != "aws_db_instance" or (wanted and match.group(2) != wanted):
+                continue
+            body = _resource_block_body(source, match)
+            start = source.find("{", match.start(), match.end()) + 1
+            patched = re.sub(r'(?m)^\s*parameter_group_name\s*=.*\n', "", body)
+            if re.search(r'\bengine_version\s*=', patched):
+                patched = re.sub(r'(\bengine_version\s*=\s*)"[^"]*"', rf'\g<1>"{version}"', patched, count=1)
+            else:
+                patched = f'\n  engine_version = "{version}"' + patched
+            source = source[:start] + patched + source[start + len(body):]
+            path.write_text(source, encoding="utf-8")
+            return {p.name: p.read_text(encoding="utf-8") for p in terraform_dir.glob("*.tf")}
+    raise TerraformError(
+        f"Could not find {resource_address or 'an aws_db_instance'} in the workspace.",
+        error_kind="workspace_error",
+    )
+
+
+def set_db_username(workspace: Path, username: str) -> dict[str, str]:
+    """Use `username` as the RDS master username: set it in terraform.tfvars
+    (overrides any variable default) and replace a hardcoded literal.
+    Returns the {filename: content} map of the .tf files."""
+    if not re.fullmatch(r"[a-z][a-z0-9_]{0,15}", username or ""):
+        raise TerraformError(f"Invalid database username {username!r}.", error_kind="workspace_error")
+    terraform_dir = workspace / "terraform"
+    tfvars = terraform_dir / "terraform.tfvars"
+    lines = tfvars.read_text(encoding="utf-8").splitlines() if tfvars.exists() else []
+    lines = [line for line in lines if not re.match(r"\s*(?:db_username|database_username)\s*=", line)]
+    lines += [f'db_username = "{username}"', f'database_username = "{username}"']
+    declared = "\n".join(p.read_text(encoding="utf-8") for p in terraform_dir.glob("*.tf"))
+    # tfvars may only set declared variables
+    lines = [
+        line for line in lines
+        if not (m := re.match(r"\s*(\w+)\s*=", line)) or re.search(rf'\bvariable\s+"{m.group(1)}"', declared)
+    ]
+    tfvars.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    for path in terraform_dir.glob("*.tf"):
+        source = path.read_text(encoding="utf-8")
+        patched = re.sub(r'(\b(?:username|master_username)\s*=\s*)"[^"]*"', rf'\g<1>"{username}"', source)
+        if patched != source:
+            path.write_text(patched, encoding="utf-8")
+    return {p.name: p.read_text(encoding="utf-8") for p in terraform_dir.glob("*.tf")}
+
+
 def run_terraform_plan(workspace: Path, env: dict[str, str]) -> TerraformPlanResult:
     """Run the full Terraform planning pipeline:
         1. terraform fmt -recursive
@@ -1170,6 +1748,7 @@ def run_terraform_plan(workspace: Path, env: dict[str, str]) -> TerraformPlanRes
     """
     terraform_dir = workspace / "terraform"
     deployment_id = workspace.name  # used only for log correlation
+    env = _with_plugin_cache(env)
 
     logger.info(
         "[DEPLOYMENT] terraform_fmt_started | deployment_id=%s", deployment_id
@@ -1260,8 +1839,24 @@ def run_terraform_plan(workspace: Path, env: dict[str, str]) -> TerraformPlanRes
         "has_destructive_changes": bool(destroy or replace),
         "estimated_cost": None,
     }
+    # Fingerprint only the planned changes. The full plan JSON contains volatile
+    # metadata (e.g. top-level "timestamp") that differs on every run, which
+    # would make the pre-apply verification re-plan always look "changed".
+    fingerprint_source = {
+        "resource_changes": [
+            {
+                "address": item.get("address"),
+                "actions": (item.get("change") or {}).get("actions"),
+                "before": (item.get("change") or {}).get("before"),
+                "after": (item.get("change") or {}).get("after"),
+                "after_unknown": (item.get("change") or {}).get("after_unknown"),
+            }
+            for item in plan.get("resource_changes") or []
+        ],
+        "output_changes": plan.get("output_changes") or {},
+    }
     fingerprint = hashlib.sha256(
-        json.dumps(plan, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+        json.dumps(fingerprint_source, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
     ).hexdigest()
 
     document_path = workspace / "deployment-plan.json"
@@ -1284,6 +1879,7 @@ def run_terraform_plan(workspace: Path, env: dict[str, str]) -> TerraformPlanRes
 
 def apply_plan(workspace: Path, env: dict[str, str], plan_name: str = "deployment.tfplan") -> dict[str, Any]:
     terraform_dir = workspace / "terraform"
+    env = _with_plugin_cache(env)
     _terraform_command(
         ["apply", "-input=false", "-no-color", "-auto-approve", plan_name],
         terraform_dir,
